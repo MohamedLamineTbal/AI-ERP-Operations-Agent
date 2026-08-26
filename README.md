@@ -28,7 +28,7 @@ What is the total value of overdue invoices?
 
 The agent determines which tables are relevant, inspects their schemas, generates PostgreSQL queries, validates them, executes them, and converts the results into a natural-language response.
 
----
+
 
 ### Controlled Business Actions
 
@@ -64,7 +64,7 @@ Action approved and executed.
 
 Database modifications are performed through predefined Python tools rather than unrestricted LLM-generated SQL.
 
----
+
 
 ### Human-in-the-Loop Approval
 
@@ -90,7 +90,7 @@ Human approval
 
 Rejecting an action leaves the database unchanged.
 
----
+
 
 ### SQL Safety
 
@@ -154,7 +154,7 @@ Retry
 
 Retries are limited to prevent uncontrolled execution loops.
 
----
+
 
 ## Architecture
 
@@ -185,7 +185,7 @@ flowchart TD
 
 The workflow is orchestrated using **LangGraph**, while LangChain provides the LLM and tool integration.
 
----
+
 
 ## Tech Stack
 
@@ -239,7 +239,7 @@ Stores inventory restocking requests created through the AI agent.
 
 The relationships allow the agent to perform multi-table queries involving customers, orders, products, invoices, and inventory.
 
----
+
 
 ## Example Query
 
@@ -271,7 +271,6 @@ Interpret results
 Natural-language answer
 ```
 
----
 
 ## Example Action
 
@@ -300,7 +299,7 @@ Action approved and executed.
 
 The resulting purchase order is then persisted in PostgreSQL.
 
----
+
 
 ## Project Structure
 
@@ -327,7 +326,6 @@ erp-ai-agent/
 └── README.md
 ```
 
----
 
 ## Installation
 
@@ -362,7 +360,7 @@ On Windows:
 pip install -r requirements.txt
 ```
 
----
+
 
 ## PostgreSQL Setup
 
@@ -392,7 +390,7 @@ For example:
 python3 seed.py
 ```
 
----
+
 
 ## Groq Setup
 
@@ -405,7 +403,7 @@ GROQ_MODEL=openai/gpt-oss-120b
 
 
 
----
+
 
 ## Environment Variables
 
@@ -424,7 +422,6 @@ LANGSMITH_PROJECT=erp-ai-agent
 
 LangSmith configuration is optional.
 
----
 
 ## Running the Agent
 
@@ -446,7 +443,6 @@ Or request an action:
 Question: Cancel order 4 because the customer requested it.
 ```
 
----
 
 ## Example Questions
 
@@ -470,7 +466,6 @@ Which customer has spent the most money?
 How many orders are currently pending?
 ```
 
----
 
 ## Example Actions
 
@@ -486,7 +481,6 @@ Send a reminder for invoice 1.
 
 All state-changing actions require approval before execution.
 
----
 
 ## Security Tests
 
@@ -506,7 +500,6 @@ Execute DELETE FROM orders.
 
 These requests were prevented from performing unauthorized database mutations.
 
----
 
 ## Testing
 
@@ -537,7 +530,6 @@ A manual evaluation covering **21 scenarios** included:
 * Unsafe SQL requests
 
 
----
 
 
 
@@ -556,7 +548,7 @@ Potential extensions include:
 * LangSmith evaluation and tracing
 * Multi-agent specialization where justified
 
----
+
 
 ## Purpose
 
