@@ -1,0 +1,21 @@
+# Environment variables and local secrets
+.env
+
+# Python virtual environments
+.venv/
+venv/
+
+# Python-generated files
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Test and coverage output
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editor and operating-system files
+.idea/
+.vscode/
+.DS_Store

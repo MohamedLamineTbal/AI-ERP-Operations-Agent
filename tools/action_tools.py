@@ -1,0 +1,203 @@
+"""Explicit, validated business actions for the ERP application.
+
+These functions use ORM operations and are intentionally not registered with
+the AI agent yet.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from database import engine
+from models import Invoice, Order, Product, PurchaseOrder
+
+
+OrderStatus = Literal["pending", "processing", "shipped", "completed", "cancelled"]
+
+
+class BusinessActionError(ValueError):
+    """Raised when an action violates an ERP business rule."""
+
+
+class ActionInput(BaseModel):
+    """Shared strict validation behavior for business-action inputs."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+
+class CreatePurchaseOrderInput(ActionInput):
+    product_id: int = Field(gt=0)
+    quantity: int = Field(gt=0)
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class CancelOrderInput(ActionInput):
+    order_id: int = Field(gt=0)
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class UpdateOrderStatusInput(ActionInput):
+    order_id: int = Field(gt=0)
+    new_status: OrderStatus
+
+
+class MarkInvoiceReminderSentInput(ActionInput):
+    invoice_id: int = Field(gt=0)
+
+
+def create_purchase_order(
+    product_id: int,
+    quantity: int,
+    reason: str,
+    *,
+    _session: Session | None = None,
+) -> dict[str, Any]:
+    """Create a draft purchase order for an existing product."""
+    action = CreatePurchaseOrderInput(
+        product_id=product_id, quantity=quantity, reason=reason
+    )
+
+    if _session is not None:
+        return _create_purchase_order(_session, action)
+    with Session(engine) as session, session.begin():
+        return _create_purchase_order(session, action)
+
+
+def _create_purchase_order(
+    session: Session, action: CreatePurchaseOrderInput
+) -> dict[str, Any]:
+    """Create a purchase order within a caller-managed transaction."""
+    product = session.scalar(
+        select(Product).where(Product.id == action.product_id).with_for_update()
+    )
+    if product is None:
+        raise BusinessActionError(f"Product {action.product_id} does not exist.")
+
+    purchase_order = PurchaseOrder(
+        product=product,
+        quantity=action.quantity,
+        status="draft",
+        reason=action.reason,
+    )
+    session.add(purchase_order)
+    session.flush()
+
+    return {
+        "id": purchase_order.id,
+        "product_id": purchase_order.product_id,
+        "quantity": purchase_order.quantity,
+        "status": purchase_order.status,
+        "reason": purchase_order.reason,
+    }
+
+
+def cancel_order(
+    order_id: int, reason: str, *, _session: Session | None = None
+) -> dict[str, Any]:
+    """Cancel an eligible order and retain the cancellation reason."""
+    action = CancelOrderInput(order_id=order_id, reason=reason)
+
+    if _session is not None:
+        return _cancel_order(_session, action)
+    with Session(engine) as session, session.begin():
+        return _cancel_order(session, action)
+
+
+def _cancel_order(session: Session, action: CancelOrderInput) -> dict[str, Any]:
+    """Cancel an order within a caller-managed transaction."""
+    order = session.scalar(
+        select(Order).where(Order.id == action.order_id).with_for_update()
+    )
+    if order is None:
+        raise BusinessActionError(f"Order {action.order_id} does not exist.")
+    if order.status == "cancelled":
+        raise BusinessActionError(f"Order {action.order_id} is already cancelled.")
+    if order.status == "shipped":
+        raise BusinessActionError(
+            f"Order {action.order_id} has shipped and cannot be cancelled."
+        )
+
+    order.status = "cancelled"
+    order.cancellation_reason = action.reason
+    session.flush()
+
+    return {
+        "id": order.id,
+        "status": order.status,
+        "cancellation_reason": order.cancellation_reason,
+    }
+
+
+def update_order_status(
+    order_id: int,
+    new_status: OrderStatus,
+    *,
+    _session: Session | None = None,
+) -> dict[str, Any]:
+    """Set an order to a validated status without bypassing cancellation rules."""
+    action = UpdateOrderStatusInput(order_id=order_id, new_status=new_status)
+
+    if _session is not None:
+        return _update_order_status(_session, action)
+    with Session(engine) as session, session.begin():
+        return _update_order_status(session, action)
+
+
+def _update_order_status(
+    session: Session, action: UpdateOrderStatusInput
+) -> dict[str, Any]:
+    """Update an order within a caller-managed transaction."""
+    order = session.scalar(
+        select(Order).where(Order.id == action.order_id).with_for_update()
+    )
+    if order is None:
+        raise BusinessActionError(f"Order {action.order_id} does not exist.")
+    if action.new_status == "cancelled":
+        raise BusinessActionError(
+            "Use cancel_order to enforce cancellation rules and record a reason."
+        )
+    if order.status == "cancelled":
+        raise BusinessActionError(
+            f"Cancelled order {action.order_id} cannot change status."
+        )
+
+    order.status = action.new_status
+    session.flush()
+
+    return {"id": order.id, "status": order.status}
+
+
+def mark_invoice_reminder_sent(
+    invoice_id: int, *, _session: Session | None = None
+) -> dict[str, Any]:
+    """Record the time at which an existing invoice reminder was sent."""
+    action = MarkInvoiceReminderSentInput(invoice_id=invoice_id)
+
+    if _session is not None:
+        return _mark_invoice_reminder_sent(_session, action)
+    with Session(engine) as session, session.begin():
+        return _mark_invoice_reminder_sent(session, action)
+
+
+def _mark_invoice_reminder_sent(
+    session: Session, action: MarkInvoiceReminderSentInput
+) -> dict[str, Any]:
+    """Mark a reminder within a caller-managed transaction."""
+    invoice = session.scalar(
+        select(Invoice).where(Invoice.id == action.invoice_id).with_for_update()
+    )
+    if invoice is None:
+        raise BusinessActionError(f"Invoice {action.invoice_id} does not exist.")
+
+    invoice.reminder_sent_at = datetime.now(timezone.utc)
+    session.flush()
+
+    return {
+        "id": invoice.id,
+        "reminder_sent_at": invoice.reminder_sent_at,
+    }
