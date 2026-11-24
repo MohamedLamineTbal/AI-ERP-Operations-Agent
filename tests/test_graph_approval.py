@@ -41,6 +41,9 @@ class ApprovalNodes:
     def answer_query(self, state: AgentState) -> dict[str, Any]:
         raise AssertionError("Action requests must not enter the query answer node")
 
+    def verify_answer(self, state: AgentState) -> dict[str, Any]:
+        raise AssertionError("Action requests must not enter answer verification")
+
     def prepare_action(self, state: AgentState) -> dict[str, Any]:
         return {"pending_actions": [self.proposal], "error": None}
 

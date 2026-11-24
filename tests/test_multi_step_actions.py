@@ -51,6 +51,9 @@ class QueryThenActionNodes:
         answer = state.get("error") or "query complete"
         return {"answer": answer, "messages": [AIMessage(content=answer)]}
 
+    def verify_answer(self, state: AgentState) -> dict[str, Any]:
+        raise AssertionError("Query-then-action requests end in approval, not an answer")
+
     def prepare_action(self, state: AgentState) -> dict[str, Any]:
         return ERPGraphNodes.prepare_action(self, state)
 
