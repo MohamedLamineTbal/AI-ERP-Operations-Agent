@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from decimal import Decimal
 from uuid import uuid4
 from typing import Any, Literal, Optional
 
@@ -20,7 +21,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing_extensions import Annotated, TypedDict
 
-from agent import create_groq_model, create_readonly_database
+from agent import PRICE_COLUMNS_GUIDANCE, create_groq_model, create_readonly_database
 from database import engine
 from tools.proposal_tools import (
     PendingAction,
@@ -33,6 +34,7 @@ from tools.sql_tools import execute_readonly_sql, validate_readonly_sql
 from tools.action_tools import (
     cancel_order,
     create_purchase_order,
+    get_unit_costs,
     mark_invoice_reminder_sent,
     update_order_status,
 )
@@ -47,6 +49,13 @@ ActionToolName = Literal[
 ]
 
 
+class ActionCost(TypedDict):
+    """Supplier cost of one proposed purchase order; None when the product is unknown."""
+
+    unit_cost: Optional[str]
+    line_cost: Optional[str]
+
+
 class AgentState(TypedDict, total=False):
     """Shared typed data carried between every ERP graph node."""
 
@@ -56,6 +65,7 @@ class AgentState(TypedDict, total=False):
     generated_sql: Optional[str]
     sql_result: Optional[list[dict[str, Any]]]
     pending_actions: list[PendingAction]
+    action_costs: list[Optional[ActionCost]]
     error: Optional[str]
     retry_count: int
     answer: Optional[str]
@@ -107,6 +117,36 @@ def _extract_sql(value: Any) -> str:
     if text_value.lower().startswith("sqlquery:"):
         text_value = text_value.split(":", 1)[1].strip()
     return text_value
+
+
+def cost_pending_actions(
+    proposals: list[PendingAction], unit_costs: dict[int, Decimal]
+) -> list[Optional[ActionCost]]:
+    """Price each proposed purchase order; other actions carry no cost."""
+    costs: list[Optional[ActionCost]] = []
+    for proposal in proposals:
+        if proposal.tool_name != "create_purchase_order":
+            costs.append(None)
+            continue
+        unit_cost = unit_costs.get(proposal.arguments["product_id"])
+        if unit_cost is None:
+            costs.append({"unit_cost": None, "line_cost": None})
+            continue
+        costs.append(
+            {
+                "unit_cost": str(unit_cost),
+                "line_cost": str(unit_cost * proposal.arguments["quantity"]),
+            }
+        )
+    return costs
+
+
+def total_cost(costs: list[Optional[ActionCost]]) -> Optional[str]:
+    """Sum the priced lines, or None when any line's cost is unknown."""
+    lines = [cost for cost in costs if cost is not None]
+    if not lines or any(cost["line_cost"] is None for cost in lines):
+        return None
+    return str(sum(Decimal(cost["line_cost"]) for cost in lines))
 
 
 def _execute_business_action(
@@ -224,7 +264,8 @@ class ERPGraphNodes:
                             "Generate exactly one PostgreSQL SELECT statement for the "
                             "question. Return SQL only, without commentary. Never use "
                             "INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE, "
-                            "GRANT, REVOKE, SELECT INTO, or side-effecting functions."
+                            "GRANT, REVOKE, SELECT INTO, or side-effecting functions. "
+                            f"{PRICE_COLUMNS_GUIDANCE}"
                         )
                     ),
                     HumanMessage(
@@ -375,27 +416,41 @@ class ERPGraphNodes:
             if not proposals and state.get("request_type") != "query_action":
                 raise ValueError("At least one pending action is required.")
             validated = [validate_pending_action(proposal) for proposal in proposals]
-            return {"pending_actions": validated, "error": None}
+            product_ids = [
+                proposal.arguments["product_id"]
+                for proposal in validated
+                if proposal.tool_name == "create_purchase_order"
+            ]
+            unit_costs = get_unit_costs(product_ids) if product_ids else {}
+            return {
+                "pending_actions": validated,
+                "action_costs": cost_pending_actions(validated, unit_costs),
+                "error": None,
+            }
         except Exception as error:
             return {"error": f"Action validation failed: {error}"}
 
     def request_approval(self, state: AgentState) -> dict[str, Any]:
         """Pause before every state-changing action and await a human decision."""
         proposals = state["pending_actions"]
+        costs = state.get("action_costs") or [None] * len(proposals)
         actions = [
             {
                 "tool_name": proposal.tool_name,
                 "arguments": proposal.arguments,
                 "reason": proposal.reason,
                 "what_will_change": proposal.what_will_change,
+                **(cost or {}),
             }
-            for proposal in proposals
+            for proposal, cost in zip(proposals, costs)
         ]
         payload: dict[str, Any] = {
             "type": "action_approval",
             "action_count": len(actions),
             "actions": actions,
         }
+        if any(cost is not None for cost in costs):
+            payload["total_cost"] = total_cost(costs)
         if len(actions) == 1:
             payload.update(actions[0])
         decision = interrupt(payload)
@@ -594,6 +649,7 @@ def run_erp_graph(
             "generated_sql": None,
             "sql_result": None,
             "pending_actions": [],
+            "action_costs": [],
             "error": None,
             "retry_count": 0,
             "answer": None,

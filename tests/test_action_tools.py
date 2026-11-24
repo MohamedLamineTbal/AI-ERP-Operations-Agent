@@ -23,8 +23,9 @@ MISSING_ID = 2_000_000_000
 
 def test_create_purchase_order() -> None:
     with Session(engine) as session:
-        product_id = session.scalar(select(Product.id).order_by(Product.id))
-    assert product_id is not None
+        product = session.scalar(select(Product).order_by(Product.id))
+    assert product is not None
+    product_id = product.id
 
     result = create_purchase_order(product_id, 25, "Replenish warehouse stock")
     try:
@@ -35,6 +36,7 @@ def test_create_purchase_order() -> None:
             assert purchase_order.quantity == 25
             assert purchase_order.status == "draft"
             assert purchase_order.reason == "Replenish warehouse stock"
+            assert purchase_order.unit_cost == product.unit_cost
     finally:
         with Session(engine) as session, session.begin():
             purchase_order = session.get(PurchaseOrder, result["id"])

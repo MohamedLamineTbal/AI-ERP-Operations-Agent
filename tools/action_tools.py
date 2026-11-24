@@ -1,12 +1,14 @@
 """Explicit, validated business actions for the ERP application.
 
-These functions use ORM operations and are intentionally not registered with
-the AI agent yet.
+These functions use ORM operations and are never exposed to the model. The
+graph calls them only after a human approves the matching proposal.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -50,6 +52,17 @@ class MarkInvoiceReminderSentInput(ActionInput):
     invoice_id: int = Field(gt=0)
 
 
+def get_unit_costs(product_ids: Iterable[int]) -> dict[int, Decimal]:
+    """Return the supplier unit cost of each listed product that exists."""
+    with Session(engine) as session:
+        rows = session.execute(
+            select(Product.id, Product.unit_cost).where(
+                Product.id.in_(set(product_ids))
+            )
+        )
+        return {product_id: unit_cost for product_id, unit_cost in rows}
+
+
 def create_purchase_order(
     product_id: int,
     quantity: int,
@@ -81,6 +94,7 @@ def _create_purchase_order(
     purchase_order = PurchaseOrder(
         product=product,
         quantity=action.quantity,
+        unit_cost=product.unit_cost,
         status="draft",
         reason=action.reason,
     )
@@ -91,6 +105,7 @@ def _create_purchase_order(
         "id": purchase_order.id,
         "product_id": purchase_order.product_id,
         "quantity": purchase_order.quantity,
+        "unit_cost": purchase_order.unit_cost,
         "status": purchase_order.status,
         "reason": purchase_order.reason,
     }

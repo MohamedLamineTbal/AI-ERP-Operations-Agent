@@ -1,5 +1,6 @@
 """Routing tests for the ERP LangGraph StateGraph."""
 
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -10,10 +11,12 @@ from graph import (
     AgentState,
     ERPGraphNodes,
     build_erp_graph,
+    cost_pending_actions,
     create_thread_config,
     get_interrupt_payload,
     resume_erp_graph,
     run_erp_graph,
+    total_cost,
 )
 from tools.proposal_tools import PendingAction, format_pending_action
 from tools.sql_tools import validate_readonly_sql
@@ -275,3 +278,49 @@ def test_invalid_sql_stops_after_three_attempts() -> None:
     assert result["retry_count"] == 3
     assert "PostgreSQL could not execute" in result["error"]
     assert result["answer"] == result["error"]
+
+
+def _proposal(tool_name: str, arguments: dict[str, Any]) -> PendingAction:
+    return PendingAction(
+        tool_name=tool_name,
+        arguments=arguments,
+        reason="Cost evaluation",
+        what_will_change="Evaluated for cost only.",
+    )
+
+
+def test_purchase_orders_are_priced_at_supplier_cost() -> None:
+    proposals = [
+        _proposal("create_purchase_order", {"product_id": 1, "quantity": 13}),
+        _proposal("cancel_order", {"order_id": 4}),
+        _proposal("create_purchase_order", {"product_id": 3, "quantity": 20}),
+    ]
+    costs = cost_pending_actions(
+        proposals, {1: Decimal("144.94"), 3: Decimal("21.97")}
+    )
+
+    assert costs == [
+        {"unit_cost": "144.94", "line_cost": "1884.22"},
+        None,
+        {"unit_cost": "21.97", "line_cost": "439.40"},
+    ]
+    assert total_cost(costs) == "2323.62"
+
+
+def test_total_cost_is_unknown_when_a_product_has_no_cost() -> None:
+    proposals = [
+        _proposal("create_purchase_order", {"product_id": 1, "quantity": 2}),
+        _proposal("create_purchase_order", {"product_id": 999, "quantity": 2}),
+    ]
+    costs = cost_pending_actions(proposals, {1: Decimal("10.00")})
+
+    assert costs[1] == {"unit_cost": None, "line_cost": None}
+    assert total_cost(costs) is None
+
+
+def test_actions_without_purchase_orders_have_no_total() -> None:
+    costs = cost_pending_actions([_proposal("cancel_order", {"order_id": 4})], {})
+
+    assert costs == [None]
+    assert total_cost(costs) is None
+

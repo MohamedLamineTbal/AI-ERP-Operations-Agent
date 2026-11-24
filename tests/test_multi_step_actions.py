@@ -110,6 +110,13 @@ def test_restock_matching_products_after_batch_approval() -> None:
             {"product_id": product_ids[0], "quantity": 18},
             {"product_id": product_ids[1], "quantity": 13},
         ]
+        with Session(engine) as session:
+            costs = [session.get(Product, pid).unit_cost for pid in product_ids]
+        assert [action["line_cost"] for action in approval["actions"]] == [
+            str(costs[0] * 18),
+            str(costs[1] * 13),
+        ]
+        assert approval["total_cost"] == str(costs[0] * 18 + costs[1] * 13)
 
         with Session(engine) as session:
             assert not list(
