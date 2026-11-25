@@ -10,7 +10,7 @@ from uuid import uuid4
 from typing import Any, Literal, Optional
 
 # Load .env before LangChain and LangGraph initialize environment-driven tracers.
-import config as _config  # noqa: F401
+import config as _config
 
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
 from langchain_community.agent_toolkits import SQLDatabaseToolkit
@@ -44,6 +44,17 @@ from tools.action_tools import (
 MAX_SQL_ATTEMPTS = 3
 MAX_ANSWER_ATTEMPTS = 2
 logger = logging.getLogger("erp_agent")
+
+
+def configure_outcome_log() -> None:
+    """Write the erp_agent log, including record_outcome lines, to erp_agent.log."""
+    if any(isinstance(h, logging.FileHandler) for h in logger.handlers):
+        return
+    handler = logging.FileHandler(_config.BASE_DIR / "erp_agent.log")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+
 
 VERIFY_ANSWER_PROMPT = (
     "You review an ERP assistant's work before the user sees it. Given the "
@@ -766,36 +777,39 @@ def create_thread_config(thread_id: Optional[str] = None) -> dict[str, Any]:
     return {"configurable": {"thread_id": thread_id or str(uuid4())}}
 
 
+def initial_state(question: str) -> AgentState:
+    """Return the starting state for one request."""
+    if not isinstance(question, str) or not question.strip():
+        raise ValueError("Question must be a non-empty string.")
+    return {
+        "messages": [HumanMessage(content=question.strip())],
+        "generated_sql": None,
+        "sql_result": None,
+        "pending_actions": [],
+        "action_costs": [],
+        "error": None,
+        "retry_count": 0,
+        "answer": None,
+        "answer_attempts": 0,
+        "answer_feedback": None,
+        "verification": None,
+        "approval_status": None,
+        "action_result": None,
+        "action_results": [],
+        "action_tool": None,
+    }
+
+
 def run_erp_graph(
     question: str,
     graph: Optional[Any] = None,
     config: Optional[dict[str, Any]] = None,
 ) -> AgentState:
     """Run one terminal request through the compiled ERP graph."""
-    if not isinstance(question, str) or not question.strip():
-        raise ValueError("Question must be a non-empty string.")
+    start = initial_state(question)
     application = graph or build_erp_graph()
     run_config = config or create_thread_config()
-    return application.invoke(
-        {
-            "messages": [HumanMessage(content=question.strip())],
-            "generated_sql": None,
-            "sql_result": None,
-            "pending_actions": [],
-            "action_costs": [],
-            "error": None,
-            "retry_count": 0,
-            "answer": None,
-            "answer_attempts": 0,
-            "answer_feedback": None,
-            "verification": None,
-            "approval_status": None,
-            "action_result": None,
-            "action_results": [],
-            "action_tool": None,
-        },
-        config=run_config,
-    )
+    return application.invoke(start, config=run_config)
 
 
 def resume_erp_graph(
