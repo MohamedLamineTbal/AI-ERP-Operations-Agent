@@ -131,6 +131,17 @@ def test_failed_question_does_not_expose_internal_errors() -> None:
     assert "revenue" not in json.dumps(events[-1])
 
 
+class UnclassifiedNodes(QueryNodes):
+    def understand_request(self, state: AgentState) -> dict[str, Any]:
+        return {"error": "Request classification failed: model unavailable"}
+
+
+def test_request_that_could_not_be_classified_is_not_called_a_change() -> None:
+    events = _events(_client(UnclassifiedNodes()).post("/api/ask", json={"question": "Hi"}))
+
+    assert events[-1]["answer"] == QUERY_FAILED
+
+
 def test_change_waits_for_approval_and_is_applied_with_its_cost() -> None:
     product = _first_product()
     client = _client(PurchaseOrderNodes(product.id))
