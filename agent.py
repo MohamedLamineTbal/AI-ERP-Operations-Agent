@@ -35,6 +35,12 @@ ERP_TABLES = [
     "purchase_orders",
 ]
 
+PRICE_COLUMNS_GUIDANCE = (
+    "products.price is the selling price and products.unit_cost is the supplier "
+    "cost. Use price or order_items.unit_price for sales and revenue, and "
+    "unit_cost only for purchasing cost."
+)
+
 SQL_AGENT_PROMPT = """You are a careful ERP assistant working with a {dialect}
 database. Handle both information requests and business-action requests.
 
@@ -68,7 +74,9 @@ Security rules are absolute:
 - Do not use a SELECT statement to invoke functions with side effects.
 
 If a question is unrelated to this ERP database, say that you can only help
-with ERP information and ERP action proposals."""
+with ERP information and ERP action proposals.
+
+""" + PRICE_COLUMNS_GUIDANCE
 
 
 class ReadOnlySQLDatabase(SQLDatabase):

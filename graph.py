@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+from decimal import Decimal
 from uuid import uuid4
 from typing import Any, Literal, Optional
 
@@ -20,7 +22,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing_extensions import Annotated, TypedDict
 
-from agent import create_groq_model, create_readonly_database
+from agent import PRICE_COLUMNS_GUIDANCE, create_groq_model, create_readonly_database
 from database import engine
 from tools.proposal_tools import (
     PendingAction,
@@ -33,18 +35,39 @@ from tools.sql_tools import execute_readonly_sql, validate_readonly_sql
 from tools.action_tools import (
     cancel_order,
     create_purchase_order,
+    get_unit_costs,
     mark_invoice_reminder_sent,
     update_order_status,
 )
 
 
 MAX_SQL_ATTEMPTS = 3
+MAX_ANSWER_ATTEMPTS = 2
+logger = logging.getLogger("erp_agent")
+
+VERIFY_ANSWER_PROMPT = (
+    "You review an ERP assistant's work before the user sees it. Given the "
+    "question, the SQL that ran, its result rows, and the drafted answer, decide: "
+    "sql_answers_question: does the SQL retrieve what the question asks for, with "
+    "the right tables, filters, and aggregation? "
+    "answer_matches_result: is every fact and number in the answer supported by "
+    "the result rows? Simple arithmetic on the rows counts as supported, and an "
+    "empty result can be a correct answer. "
+    "If either is false, explain the problem in one sentence in problem. "
+)
 ActionToolName = Literal[
     "create_purchase_order",
     "cancel_order",
     "update_order_status",
     "mark_invoice_reminder_sent",
 ]
+
+
+class ActionCost(TypedDict):
+    """Supplier cost of one proposed purchase order; None when the product is unknown."""
+
+    unit_cost: Optional[str]
+    line_cost: Optional[str]
 
 
 class AgentState(TypedDict, total=False):
@@ -56,12 +79,24 @@ class AgentState(TypedDict, total=False):
     generated_sql: Optional[str]
     sql_result: Optional[list[dict[str, Any]]]
     pending_actions: list[PendingAction]
+    action_costs: list[Optional[ActionCost]]
     error: Optional[str]
     retry_count: int
     answer: Optional[str]
+    answer_attempts: int
+    answer_feedback: Optional[str]
+    verification: Optional[
+        Literal["passed", "retry_sql", "retry_answer", "failed", "unavailable"]
+    ]
     approval_status: Optional[Literal["pending", "approved", "rejected"]]
     action_result: Optional[dict[str, Any]]
     action_results: list[dict[str, Any]]
+
+
+class AnswerReview(BaseModel):
+    sql_answers_question: bool
+    answer_matches_result: bool
+    problem: Optional[str] = None
 
 
 class RequestClassification(BaseModel):
@@ -107,6 +142,36 @@ def _extract_sql(value: Any) -> str:
     if text_value.lower().startswith("sqlquery:"):
         text_value = text_value.split(":", 1)[1].strip()
     return text_value
+
+
+def cost_pending_actions(
+    proposals: list[PendingAction], unit_costs: dict[int, Decimal]
+) -> list[Optional[ActionCost]]:
+    """Price each proposed purchase order; other actions carry no cost."""
+    costs: list[Optional[ActionCost]] = []
+    for proposal in proposals:
+        if proposal.tool_name != "create_purchase_order":
+            costs.append(None)
+            continue
+        unit_cost = unit_costs.get(proposal.arguments["product_id"])
+        if unit_cost is None:
+            costs.append({"unit_cost": None, "line_cost": None})
+            continue
+        costs.append(
+            {
+                "unit_cost": str(unit_cost),
+                "line_cost": str(unit_cost * proposal.arguments["quantity"]),
+            }
+        )
+    return costs
+
+
+def total_cost(costs: list[Optional[ActionCost]]) -> Optional[str]:
+    """Sum the priced lines, or None when any line's cost is unknown."""
+    lines = [cost for cost in costs if cost is not None]
+    if not lines or any(cost["line_cost"] is None for cost in lines):
+        return None
+    return str(sum(Decimal(cost["line_cost"]) for cost in lines))
 
 
 def _execute_business_action(
@@ -224,7 +289,8 @@ class ERPGraphNodes:
                             "Generate exactly one PostgreSQL SELECT statement for the "
                             "question. Return SQL only, without commentary. Never use "
                             "INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE, "
-                            "GRANT, REVOKE, SELECT INTO, or side-effecting functions."
+                            "GRANT, REVOKE, SELECT INTO, or side-effecting functions. "
+                            f"{PRICE_COLUMNS_GUIDANCE}"
                         )
                     ),
                     HumanMessage(
@@ -280,6 +346,13 @@ class ERPGraphNodes:
             )
         else:
             question = _question_from_state(state)
+            feedback = state.get("answer_feedback")
+            correction = (
+                f"\nA reviewer rejected your previous answer: {feedback}"
+                "\nWrite a corrected answer."
+                if feedback
+                else ""
+            )
             try:
                 response = self.llm.invoke(
                     [
@@ -294,6 +367,7 @@ class ERPGraphNodes:
                                 f"Question: {question}\n"
                                 f"SQL: {state.get('generated_sql')}\n"
                                 f"Result: {json.dumps(state.get('sql_result'), default=str)}"
+                                f"{correction}"
                             )
                         ),
                     ]
@@ -306,6 +380,52 @@ class ERPGraphNodes:
             "answer": answer,
             "messages": [AIMessage(content=answer)],
             "error": answer_error,
+            "answer_attempts": state.get("answer_attempts", 0) + 1,
+        }
+
+    def verify_answer(self, state: AgentState) -> dict[str, Any]:
+        """Check the query and the drafted answer, and decide whether to retry."""
+        try:
+            review = self.llm.with_structured_output(AnswerReview).invoke(
+                [
+                    SystemMessage(
+                        content=VERIFY_ANSWER_PROMPT + PRICE_COLUMNS_GUIDANCE
+                    ),
+                    HumanMessage(
+                        content=(
+                            f"Question: {_question_from_state(state)}\n"
+                            f"SQL: {state.get('generated_sql')}\n"
+                            f"Result: {json.dumps(state.get('sql_result'), default=str)}\n"
+                            f"Answer: {state.get('answer')}"
+                        )
+                    ),
+                ]
+            )
+        except Exception as error:
+            logger.warning("Answer verification unavailable: %s", error)
+            return {"verification": "unavailable"}
+
+        if review.sql_answers_question and review.answer_matches_result:
+            return {"verification": "passed", "answer_feedback": None}
+
+        problem = review.problem or "The answer does not match the question or result."
+        if not review.sql_answers_question:
+            retry_count = state.get("retry_count", 0) + 1
+            if retry_count < MAX_SQL_ATTEMPTS:
+                return {
+                    "verification": "retry_sql",
+                    "error": f"The query does not answer the question: {problem}",
+                    "retry_count": retry_count,
+                    "answer_feedback": None,
+                }
+        elif state.get("answer_attempts", 0) < MAX_ANSWER_ATTEMPTS:
+            return {"verification": "retry_answer", "answer_feedback": problem}
+
+        answer = f"{state.get('answer')}\n\nWarning: I could not verify this answer. {problem}"
+        return {
+            "verification": "failed",
+            "answer": answer,
+            "messages": [AIMessage(content=answer)],
         }
 
     def prepare_action(self, state: AgentState) -> dict[str, Any]:
@@ -375,27 +495,41 @@ class ERPGraphNodes:
             if not proposals and state.get("request_type") != "query_action":
                 raise ValueError("At least one pending action is required.")
             validated = [validate_pending_action(proposal) for proposal in proposals]
-            return {"pending_actions": validated, "error": None}
+            product_ids = [
+                proposal.arguments["product_id"]
+                for proposal in validated
+                if proposal.tool_name == "create_purchase_order"
+            ]
+            unit_costs = get_unit_costs(product_ids) if product_ids else {}
+            return {
+                "pending_actions": validated,
+                "action_costs": cost_pending_actions(validated, unit_costs),
+                "error": None,
+            }
         except Exception as error:
             return {"error": f"Action validation failed: {error}"}
 
     def request_approval(self, state: AgentState) -> dict[str, Any]:
         """Pause before every state-changing action and await a human decision."""
         proposals = state["pending_actions"]
+        costs = state.get("action_costs") or [None] * len(proposals)
         actions = [
             {
                 "tool_name": proposal.tool_name,
                 "arguments": proposal.arguments,
                 "reason": proposal.reason,
                 "what_will_change": proposal.what_will_change,
+                **(cost or {}),
             }
-            for proposal in proposals
+            for proposal, cost in zip(proposals, costs)
         ]
         payload: dict[str, Any] = {
             "type": "action_approval",
             "action_count": len(actions),
             "actions": actions,
         }
+        if any(cost is not None for cost in costs):
+            payload["total_cost"] = total_cost(costs)
         if len(actions) == 1:
             payload.update(actions[0])
         decision = interrupt(payload)
@@ -493,6 +627,44 @@ def _route_after_execution(
     return "answer"
 
 
+def _route_after_answer(state: AgentState) -> Literal["verify", "record"]:
+    return "record" if state.get("error") else "verify"
+
+
+def _route_after_verification(
+    state: AgentState,
+) -> Literal["retry_sql", "retry_answer", "record"]:
+    verification = state.get("verification")
+    if verification in {"retry_sql", "retry_answer"}:
+        return verification
+    return "record"
+
+
+def record_outcome(state: AgentState) -> dict[str, Any]:
+    """Log one structured line describing how the request ended."""
+    logger.info(
+        json.dumps(
+            {
+                "question": _question_from_state(state),
+                "request_type": state.get("request_type"),
+                "sql": state.get("generated_sql"),
+                "sql_retries": state.get("retry_count", 0),
+                "verification": state.get("verification"),
+                "approval_status": state.get("approval_status"),
+                "actions": [
+                    {"tool_name": proposal.tool_name, "arguments": proposal.arguments}
+                    for proposal in state.get("pending_actions", [])
+                ],
+                "action_results": state.get("action_results"),
+                "error": state.get("error"),
+                "answer": state.get("answer"),
+            },
+            default=str,
+        )
+    )
+    return {}
+
+
 def _route_after_action_validation(
     state: AgentState,
 ) -> Literal["approval", "finish"]:
@@ -526,6 +698,8 @@ def build_erp_graph(
     workflow.add_node("request_approval", graph_nodes.request_approval)
     workflow.add_node("execute_action", graph_nodes.execute_action)
     workflow.add_node("finish_action", graph_nodes.finish_action)
+    workflow.add_node("verify_answer", graph_nodes.verify_answer)
+    workflow.add_node("record_outcome", record_outcome)
 
     workflow.add_edge(START, "understand_request")
     workflow.add_conditional_edges(
@@ -554,7 +728,21 @@ def build_erp_graph(
             "prepare_action": "prepare_action",
         },
     )
-    workflow.add_edge("answer_query", END)
+    workflow.add_conditional_edges(
+        "answer_query",
+        _route_after_answer,
+        {"verify": "verify_answer", "record": "record_outcome"},
+    )
+    workflow.add_conditional_edges(
+        "verify_answer",
+        _route_after_verification,
+        {
+            "retry_sql": "generate_sql",
+            "retry_answer": "answer_query",
+            "record": "record_outcome",
+        },
+    )
+    workflow.add_edge("record_outcome", END)
 
     workflow.add_edge("prepare_action", "validate_action")
     workflow.add_conditional_edges(
@@ -568,7 +756,7 @@ def build_erp_graph(
         {"execute": "execute_action", "finish": "finish_action"},
     )
     workflow.add_edge("execute_action", "finish_action")
-    workflow.add_edge("finish_action", END)
+    workflow.add_edge("finish_action", "record_outcome")
 
     return workflow.compile(checkpointer=checkpointer or InMemorySaver())
 
@@ -594,9 +782,13 @@ def run_erp_graph(
             "generated_sql": None,
             "sql_result": None,
             "pending_actions": [],
+            "action_costs": [],
             "error": None,
             "retry_count": 0,
             "answer": None,
+            "answer_attempts": 0,
+            "answer_feedback": None,
+            "verification": None,
             "approval_status": None,
             "action_result": None,
             "action_results": [],
