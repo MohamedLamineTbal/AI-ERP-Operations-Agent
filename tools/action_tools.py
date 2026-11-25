@@ -132,9 +132,9 @@ def _cancel_order(session: Session, action: CancelOrderInput) -> dict[str, Any]:
         raise BusinessActionError(f"Order {action.order_id} does not exist.")
     if order.status == "cancelled":
         raise BusinessActionError(f"Order {action.order_id} is already cancelled.")
-    if order.status == "shipped":
+    if order.status in {"shipped", "completed"}:
         raise BusinessActionError(
-            f"Order {action.order_id} has shipped and cannot be cancelled."
+            f"Order {action.order_id} is {order.status} and cannot be cancelled."
         )
 
     order.status = "cancelled"
