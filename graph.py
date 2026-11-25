@@ -10,7 +10,7 @@ from uuid import uuid4
 from typing import Any, Literal, Optional
 
 # Load .env before LangChain and LangGraph initialize environment-driven tracers.
-import config as _config  # noqa: F401
+import config as _config
 
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
 from langchain_community.agent_toolkits import SQLDatabaseToolkit
@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing_extensions import Annotated, TypedDict
 
-from agent import PRICE_COLUMNS_GUIDANCE, create_groq_model, create_readonly_database
+from agent import SALES_GUIDANCE, create_groq_model, create_readonly_database
 from database import engine
 from tools.proposal_tools import (
     PendingAction,
@@ -43,7 +43,22 @@ from tools.action_tools import (
 
 MAX_SQL_ATTEMPTS = 3
 MAX_ANSWER_ATTEMPTS = 2
+OFF_TOPIC_ANSWER = (
+    "I can answer questions about your customers, products, orders, invoices, "
+    "and purchase orders, and prepare changes for you to approve."
+)
 logger = logging.getLogger("erp_agent")
+
+
+def configure_outcome_log() -> None:
+    """Write the erp_agent log, including record_outcome lines, to erp_agent.log."""
+    if any(isinstance(h, logging.FileHandler) for h in logger.handlers):
+        return
+    handler = logging.FileHandler(_config.BASE_DIR / "erp_agent.log")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+
 
 VERIFY_ANSWER_PROMPT = (
     "You review an ERP assistant's work before the user sees it. Given the "
@@ -74,7 +89,7 @@ class AgentState(TypedDict, total=False):
     """Shared typed data carried between every ERP graph node."""
 
     messages: Annotated[list[AnyMessage], add_messages]
-    request_type: Literal["query", "action", "query_action"]
+    request_type: Literal["query", "action", "query_action", "other"]
     action_tool: Optional[ActionToolName]
     generated_sql: Optional[str]
     sql_result: Optional[list[dict[str, Any]]]
@@ -100,7 +115,7 @@ class AnswerReview(BaseModel):
 
 
 class RequestClassification(BaseModel):
-    request_type: Literal["query", "action", "query_action"]
+    request_type: Literal["query", "action", "query_action", "other"]
     action_tool: Optional[ActionToolName] = None
 
 
@@ -236,12 +251,21 @@ class ERPGraphNodes:
                             "Use 'action' for one directly identified business record. "
                             "Use 'query_action' when records must first be selected from "
                             "the database before applying an action to the matching set. "
+                            "Use 'other' for greetings, small talk, and anything not about "
+                            "the ERP data. "
                             "For action requests, set action_tool to the matching tool."
                         )
                     ),
                     HumanMessage(content=question),
                 ]
             )
+            if result.request_type == "other":
+                return {
+                    "request_type": "other",
+                    "answer": OFF_TOPIC_ANSWER,
+                    "messages": [AIMessage(content=OFF_TOPIC_ANSWER)],
+                    "error": None,
+                }
             return {
                 "request_type": result.request_type,
                 "action_tool": result.action_tool,
@@ -290,7 +314,7 @@ class ERPGraphNodes:
                             "question. Return SQL only, without commentary. Never use "
                             "INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE, "
                             "GRANT, REVOKE, SELECT INTO, or side-effecting functions. "
-                            f"{PRICE_COLUMNS_GUIDANCE}"
+                            f"{SALES_GUIDANCE}"
                         )
                     ),
                     HumanMessage(
@@ -389,7 +413,7 @@ class ERPGraphNodes:
             review = self.llm.with_structured_output(AnswerReview).invoke(
                 [
                     SystemMessage(
-                        content=VERIFY_ANSWER_PROMPT + PRICE_COLUMNS_GUIDANCE
+                        content=VERIFY_ANSWER_PROMPT + SALES_GUIDANCE
                     ),
                     HumanMessage(
                         content=(
@@ -601,7 +625,7 @@ class ERPGraphNodes:
 
 def _route_request(
     state: AgentState,
-) -> Literal["query", "action", "query_action", "error"]:
+) -> Literal["query", "action", "query_action", "other", "error"]:
     if state.get("error"):
         return "error"
     return state["request_type"]
@@ -709,6 +733,7 @@ def build_erp_graph(
             "query": "generate_sql",
             "query_action": "generate_sql",
             "action": "prepare_action",
+            "other": "record_outcome",
             "error": "answer_query",
         },
     )
@@ -766,36 +791,39 @@ def create_thread_config(thread_id: Optional[str] = None) -> dict[str, Any]:
     return {"configurable": {"thread_id": thread_id or str(uuid4())}}
 
 
+def initial_state(question: str) -> AgentState:
+    """Return the starting state for one request."""
+    if not isinstance(question, str) or not question.strip():
+        raise ValueError("Question must be a non-empty string.")
+    return {
+        "messages": [HumanMessage(content=question.strip())],
+        "generated_sql": None,
+        "sql_result": None,
+        "pending_actions": [],
+        "action_costs": [],
+        "error": None,
+        "retry_count": 0,
+        "answer": None,
+        "answer_attempts": 0,
+        "answer_feedback": None,
+        "verification": None,
+        "approval_status": None,
+        "action_result": None,
+        "action_results": [],
+        "action_tool": None,
+    }
+
+
 def run_erp_graph(
     question: str,
     graph: Optional[Any] = None,
     config: Optional[dict[str, Any]] = None,
 ) -> AgentState:
     """Run one terminal request through the compiled ERP graph."""
-    if not isinstance(question, str) or not question.strip():
-        raise ValueError("Question must be a non-empty string.")
+    start = initial_state(question)
     application = graph or build_erp_graph()
     run_config = config or create_thread_config()
-    return application.invoke(
-        {
-            "messages": [HumanMessage(content=question.strip())],
-            "generated_sql": None,
-            "sql_result": None,
-            "pending_actions": [],
-            "action_costs": [],
-            "error": None,
-            "retry_count": 0,
-            "answer": None,
-            "answer_attempts": 0,
-            "answer_feedback": None,
-            "verification": None,
-            "approval_status": None,
-            "action_result": None,
-            "action_results": [],
-            "action_tool": None,
-        },
-        config=run_config,
-    )
+    return application.invoke(start, config=run_config)
 
 
 def resume_erp_graph(

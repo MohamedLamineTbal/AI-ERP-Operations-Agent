@@ -9,9 +9,11 @@ from langchain_core.messages import HumanMessage
 
 from graph import (
     MAX_SQL_ATTEMPTS,
+    OFF_TOPIC_ANSWER,
     AgentState,
     AnswerReview,
     ERPGraphNodes,
+    RequestClassification,
     build_erp_graph,
     cost_pending_actions,
     create_thread_config,
@@ -75,6 +77,26 @@ def test_request_classification_setup_failure_becomes_graph_error() -> None:
     assert result == {
         "error": "Request classification failed: structured output unavailable"
     }
+
+
+class OffTopicClassifierLLM:
+    def with_structured_output(self, schema: Any) -> Any:
+        return self
+
+    def invoke(self, messages: Any) -> Any:
+        return RequestClassification(request_type="other")
+
+
+def test_off_topic_request_gets_a_help_reply_without_touching_data() -> None:
+    nodes = ERPGraphNodes.__new__(ERPGraphNodes)
+    nodes.llm = OffTopicClassifierLLM()
+
+    result = run_erp_graph("HI", build_erp_graph(nodes))
+
+    assert result["answer"] == OFF_TOPIC_ANSWER
+    assert result.get("error") is None
+    assert result.get("generated_sql") is None
+    assert result["pending_actions"] == []
 
 
 def test_answer_generation_failure_becomes_graph_error() -> None:
