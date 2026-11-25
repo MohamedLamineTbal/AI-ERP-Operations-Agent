@@ -8,6 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 pip install -r requirements.txt        # deps (use a .venv)
 cp .env.example .env                   # then set DATABASE_URL and GROQ_API_KEY
 python3 seed.py                        # create tables + seed sample data (skips if customers exist)
+uvicorn api:app --reload               # web app at http://127.0.0.1:8000 (Desk + Records)
 python3 main.py                        # interactive terminal: one question per run, y/n approval prompt
 pytest                                 # full suite
 pytest tests/test_graph.py::test_name  # single test
@@ -25,7 +26,7 @@ Testing notes:
 
 A natural-language ERP assistant over PostgreSQL. Reads go through LLM-generated, read-only SQL. Writes go only through fixed Python business tools, and only after a human approves them.
 
-**Entry path:** `main.py` → `graph.py` (`build_erp_graph`, `run_erp_graph`, `resume_erp_graph`). The LangGraph `StateGraph` uses an `InMemorySaver` checkpointer. `request_approval` calls `interrupt()`, the caller reads the payload with `get_interrupt_payload`, then resumes on the same `thread_id` with `Command(resume="approved"|"rejected")`.
+**Entry paths:** `main.py` (terminal) and `api.py` (FastAPI, serves `web/`) both drive `graph.py` (`build_erp_graph`, `initial_state`, `run_erp_graph`, `resume_erp_graph`). `POST /api/ask` streams NDJSON events: one `step` per graph node (`STEP_LABELS`), then an `answer` or an `approval`. Pending approvals live in memory in `create_app` and are resumed by `POST /api/approvals/{id}`; they are lost when the server restarts. The API never returns internal error text to the browser; details go to the `erp_agent` log. `GET /api/records` returns every table for the Records pages, and `web/app.js` derives summaries, filters, and detail panels from it. The LangGraph `StateGraph` uses an `InMemorySaver` checkpointer. `request_approval` calls `interrupt()`, the caller reads the payload with `get_interrupt_payload`, then resumes on the same `thread_id` with `Command(resume="approved"|"rejected")`.
 
 **Graph flow (`graph.py`):**
 - `understand_request` sorts each request into one of three kinds: `query`, `action` (one directly identified record), or `query_action` (select matching rows first, then act on every match). `_infer_query_action` checks with regex before the LLM classifier runs ("restock all low-stock products", "remind all overdue invoices"). Only `create_purchase_order` and `mark_invoice_reminder_sent` support `query_action`.

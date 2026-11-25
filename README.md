@@ -201,6 +201,7 @@ The workflow is orchestrated using **LangGraph**, while LangChain provides the L
 | Pydantic   | Structured action validation       |
 | pytest     | Automated testing                  |
 | LangSmith  | Optional tracing and observability |
+| FastAPI    | Web API and web app server         |
 
 ---
 
@@ -308,12 +309,18 @@ The resulting purchase order is then persisted in PostgreSQL.
 erp-ai-agent/
 │
 ├── main.py
+├── api.py
 ├── agent.py
 ├── graph.py
 ├── config.py
 ├── database.py
 ├── models.py
 ├── seed.py
+│
+├── web/
+│   ├── index.html
+│   ├── styles.css
+│   └── app.js
 │
 ├── tools/
 │   ├── sql_tools.py
@@ -425,6 +432,18 @@ LangSmith configuration is optional.
 
 
 ## Running the Agent
+
+### Web app
+
+Start the server:
+
+```bash
+uvicorn api:app --reload
+```
+
+Then open http://127.0.0.1:8000. The **Desk** is where you ask questions and approve or reject changes. **Records** lets you browse customers, products, orders, invoices, and purchase orders, and prepare changes from any record. Every change still waits for your approval.
+
+### Terminal
 
 Start the terminal application:
 
