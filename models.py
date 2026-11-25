@@ -44,6 +44,9 @@ class Product(Base):
     __table_args__ = (
         CheckConstraint("price >= 0", name="ck_products_price_nonnegative"),
         CheckConstraint(
+            "unit_cost >= 0", name="ck_products_unit_cost_nonnegative"
+        ),
+        CheckConstraint(
             "stock_quantity >= 0", name="ck_products_stock_nonnegative"
         ),
         CheckConstraint(
@@ -55,6 +58,7 @@ class Product(Base):
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     sku: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)
     price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    unit_cost: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     stock_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     reorder_threshold: Mapped[int] = mapped_column(
         Integer, nullable=False, default=10
@@ -157,6 +161,9 @@ class PurchaseOrder(Base):
             "quantity > 0", name="ck_purchase_orders_quantity_positive"
         ),
         CheckConstraint(
+            "unit_cost >= 0", name="ck_purchase_orders_unit_cost_nonnegative"
+        ),
+        CheckConstraint(
             "status IN ('draft', 'ordered', 'received', 'cancelled')",
             name="ck_purchase_orders_status",
         ),
@@ -167,6 +174,7 @@ class PurchaseOrder(Base):
         ForeignKey("products.id", ondelete="RESTRICT"), nullable=False, index=True
     )
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    unit_cost: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     reason: Mapped[str] = mapped_column(String(500), nullable=False)
     created_at: Mapped[datetime] = mapped_column(

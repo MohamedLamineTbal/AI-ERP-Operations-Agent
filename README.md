@@ -217,7 +217,8 @@ Stores customer and company information.
 Stores product information including:
 
 * SKU
-* price
+* selling price
+* supplier cost
 * current stock
 * reorder threshold
 
@@ -235,7 +236,7 @@ Stores invoice amounts, statuses, due dates, and reminder information.
 
 ### Purchase Orders
 
-Stores inventory restocking requests created through the AI agent.
+Stores inventory restocking requests created through the AI agent, with the supplier cost per unit at the time each order was created. The approval prompt shows each purchase order's cost and the batch total.
 
 The relationships allow the agent to perform multi-table queries involving customers, orders, products, invoices, and inventory.
 
