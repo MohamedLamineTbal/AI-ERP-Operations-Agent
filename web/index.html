@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Operations Desk</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..800&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+  <aside class="rail" aria-label="Navigation">
+    <div class="brand">Operations Desk</div>
+    <nav class="nav" id="nav" aria-label="Sections"></nav>
+    <section aria-labelledby="pending-h">
+      <h2 id="pending-h">Waiting for you</h2>
+      <div class="pending-list" id="pending-list"></div>
+    </section>
+    <p class="rail-note">Questions and records only read data. Nothing changes until you approve a slip.</p>
+  </aside>
+
+  <div class="main">
+    <div class="mobile-head">
+      <div class="brand">Operations Desk</div>
+      <button class="pill" id="pending-pill" type="button" hidden></button>
+    </div>
+    <nav class="nav-strip" id="nav-strip" aria-label="Sections"></nav>
+
+    <section class="view" id="view-desk" aria-label="Desk">
+      <div class="thread" id="thread"><div class="thread-inner" id="thread-inner">
+        <div class="desk-empty" id="desk-empty">
+          <p class="lead">Ask anything about your business.</p>
+          <p>Nothing changes without your approval.</p>
+        </div>
+      </div></div>
+      <div class="composer">
+        <div class="composer-inner">
+          <form class="ask-form" id="ask-form" novalidate>
+            <input id="question" name="question" autocomplete="off" maxlength="1000" placeholder="Ask a question or request a change" aria-label="Your request" aria-describedby="form-hint">
+            <button class="btn btn-ask" id="ask-btn" type="submit">Ask</button>
+          </form>
+          <p class="form-hint" id="form-hint" hidden></p>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" id="view-records" aria-labelledby="rec-title" hidden>
+      <div class="rec-scroll">
+        <div class="rec-inner">
+          <h1 class="rec-title" id="rec-title"></h1>
+          <p class="rec-summary" id="rec-summary"></p>
+          <div class="rec-tools">
+            <div class="filters" id="rec-filters" role="group" aria-label="Filter"></div>
+            <input type="search" id="rec-search" autocomplete="off" aria-label="Search">
+          </div>
+          <div class="ledger-wrap rec-table" id="rec-table"></div>
+        </div>
+      </div>
+      <div class="scrim" id="scrim" hidden></div>
+      <aside class="drawer" id="drawer" aria-labelledby="drawer-title" hidden></aside>
+    </section>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
