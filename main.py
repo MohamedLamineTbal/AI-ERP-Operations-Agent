@@ -1,10 +1,8 @@
 """Minimal terminal entry point with LangGraph human approval."""
 
-import logging
-
-from config import BASE_DIR
 from graph import (
     build_erp_graph,
+    configure_outcome_log,
     create_thread_config,
     get_interrupt_payload,
     resume_erp_graph,
@@ -28,16 +26,8 @@ def _format_cost(action: dict) -> str:
     return f"{action['line_cost']} ({action['unit_cost']} per unit)"
 
 
-def _configure_outcome_log() -> None:
-    handler = logging.FileHandler(BASE_DIR / "erp_agent.log")
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-    logger = logging.getLogger("erp_agent")
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
-
-
 def main() -> None:
-    _configure_outcome_log()
+    configure_outcome_log()
     question = input("Question: ").strip()
     if not question:
         print("Please enter a question about the ERP database.")
