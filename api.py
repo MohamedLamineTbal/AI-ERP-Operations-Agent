@@ -56,7 +56,8 @@ def _line(event: dict[str, Any]) -> str:
 def _final_answer(values: dict[str, Any]) -> dict[str, Any]:
     """Describe a finished run without exposing internal errors."""
     if values.get("error"):
-        failed = QUERY_FAILED if values.get("request_type") == "query" else ACTION_FAILED
+        changing = values.get("request_type") in {"action", "query_action"}
+        failed = ACTION_FAILED if changing else QUERY_FAILED
         return {"type": "answer", "answer": failed, "verified": False, "rows": None}
     rows = values.get("sql_result") if values.get("request_type") == "query" else None
     return {
