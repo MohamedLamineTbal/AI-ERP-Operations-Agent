@@ -43,6 +43,10 @@ from tools.action_tools import (
 
 MAX_SQL_ATTEMPTS = 3
 MAX_ANSWER_ATTEMPTS = 2
+OFF_TOPIC_ANSWER = (
+    "I can answer questions about your customers, products, orders, invoices, "
+    "and purchase orders, and prepare changes for you to approve."
+)
 logger = logging.getLogger("erp_agent")
 
 
@@ -85,7 +89,7 @@ class AgentState(TypedDict, total=False):
     """Shared typed data carried between every ERP graph node."""
 
     messages: Annotated[list[AnyMessage], add_messages]
-    request_type: Literal["query", "action", "query_action"]
+    request_type: Literal["query", "action", "query_action", "other"]
     action_tool: Optional[ActionToolName]
     generated_sql: Optional[str]
     sql_result: Optional[list[dict[str, Any]]]
@@ -111,7 +115,7 @@ class AnswerReview(BaseModel):
 
 
 class RequestClassification(BaseModel):
-    request_type: Literal["query", "action", "query_action"]
+    request_type: Literal["query", "action", "query_action", "other"]
     action_tool: Optional[ActionToolName] = None
 
 
@@ -247,12 +251,21 @@ class ERPGraphNodes:
                             "Use 'action' for one directly identified business record. "
                             "Use 'query_action' when records must first be selected from "
                             "the database before applying an action to the matching set. "
+                            "Use 'other' for greetings, small talk, and anything not about "
+                            "the ERP data. "
                             "For action requests, set action_tool to the matching tool."
                         )
                     ),
                     HumanMessage(content=question),
                 ]
             )
+            if result.request_type == "other":
+                return {
+                    "request_type": "other",
+                    "answer": OFF_TOPIC_ANSWER,
+                    "messages": [AIMessage(content=OFF_TOPIC_ANSWER)],
+                    "error": None,
+                }
             return {
                 "request_type": result.request_type,
                 "action_tool": result.action_tool,
@@ -612,7 +625,7 @@ class ERPGraphNodes:
 
 def _route_request(
     state: AgentState,
-) -> Literal["query", "action", "query_action", "error"]:
+) -> Literal["query", "action", "query_action", "other", "error"]:
     if state.get("error"):
         return "error"
     return state["request_type"]
@@ -720,6 +733,7 @@ def build_erp_graph(
             "query": "generate_sql",
             "query_action": "generate_sql",
             "action": "prepare_action",
+            "other": "record_outcome",
             "error": "answer_query",
         },
     )
