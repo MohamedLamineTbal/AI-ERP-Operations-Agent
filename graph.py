@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing_extensions import Annotated, TypedDict
 
-from agent import PRICE_COLUMNS_GUIDANCE, create_groq_model, create_readonly_database
+from agent import SALES_GUIDANCE, create_groq_model, create_readonly_database
 from database import engine
 from tools.proposal_tools import (
     PendingAction,
@@ -301,7 +301,7 @@ class ERPGraphNodes:
                             "question. Return SQL only, without commentary. Never use "
                             "INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE, "
                             "GRANT, REVOKE, SELECT INTO, or side-effecting functions. "
-                            f"{PRICE_COLUMNS_GUIDANCE}"
+                            f"{SALES_GUIDANCE}"
                         )
                     ),
                     HumanMessage(
@@ -400,7 +400,7 @@ class ERPGraphNodes:
             review = self.llm.with_structured_output(AnswerReview).invoke(
                 [
                     SystemMessage(
-                        content=VERIFY_ANSWER_PROMPT + PRICE_COLUMNS_GUIDANCE
+                        content=VERIFY_ANSWER_PROMPT + SALES_GUIDANCE
                     ),
                     HumanMessage(
                         content=(
