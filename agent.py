@@ -35,10 +35,11 @@ ERP_TABLES = [
     "purchase_orders",
 ]
 
-PRICE_COLUMNS_GUIDANCE = (
+SALES_GUIDANCE = (
     "products.price is the selling price and products.unit_cost is the supplier "
     "cost. Use price or order_items.unit_price for sales and revenue, and "
-    "unit_cost only for purchasing cost."
+    "unit_cost only for purchasing cost. Customer spending, sales, and revenue "
+    "exclude cancelled orders (orders.status = 'cancelled')."
 )
 
 SQL_AGENT_PROMPT = """You are a careful ERP assistant working with a {dialect}
@@ -76,7 +77,7 @@ Security rules are absolute:
 If a question is unrelated to this ERP database, say that you can only help
 with ERP information and ERP action proposals.
 
-""" + PRICE_COLUMNS_GUIDANCE
+""" + SALES_GUIDANCE
 
 
 class ReadOnlySQLDatabase(SQLDatabase):
