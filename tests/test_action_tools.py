@@ -98,13 +98,16 @@ def test_cancel_order_rejects_already_cancelled_order() -> None:
         cancel_order(order_id, "Duplicate cancellation")
 
 
-def test_cancel_order_rejects_shipped_order() -> None:
+@pytest.mark.parametrize("status", ["shipped", "completed"])
+def test_cancel_order_rejects_fulfilled_order(status: str) -> None:
     with Session(engine) as session:
-        order_id = session.scalar(select(Order.id).where(Order.status == "shipped"))
+        order_id = session.scalar(select(Order.id).where(Order.status == status))
     assert order_id is not None
 
-    with pytest.raises(BusinessActionError, match="shipped"):
+    with pytest.raises(BusinessActionError, match=status):
         cancel_order(order_id, "Too late to cancel")
+    with Session(engine) as session:
+        assert session.get(Order, order_id).status == status
 
 
 def test_update_order_status() -> None:

@@ -196,7 +196,7 @@
         const inv = o && invoiceForOrder(o.id);
         if (!o) headsUp = `Order ${args[0].order_id} wasn't found, so approving will fail.`;
         else if (o.status === "cancelled") headsUp = `Order ${o.id} is cancelled, so approving will fail.`;
-        else if (cancelling && o.status === "shipped") headsUp = `Order ${o.id} has already shipped. Shipped orders can't be cancelled, so approving will fail.`;
+        else if (cancelling && (o.status === "shipped" || o.status === "completed")) headsUp = `Order ${o.id} is ${o.status}. Shipped and completed orders can't be cancelled, so approving will fail.`;
         else if (cancelling && inv && inv.status === "overdue") headsUp = `Invoice #${inv.id} for ${fmt(inv.amount)} is overdue on this order. Cancelling the order doesn't cancel or change the invoice.`;
         else if (cancelling && inv && inv.status === "paid") headsUp = `Invoice #${inv.id} for ${fmt(inv.amount)} is already paid. Cancelling the order doesn't refund it.`;
         else if (cancelling && inv && inv.status === "sent") headsUp = `Invoice #${inv.id} for ${fmt(inv.amount)} has been sent for this order. Cancelling the order doesn't change the invoice.`;
@@ -766,7 +766,7 @@
       const slabel = el("label", null, "Change status to");
       slabel.htmlFor = "order-status";
       changes = sectionOf("Changes", actionBox([slabel, sel], "Prepare change", () => `Change order ${o.id} status to ${sel.value.toLowerCase()}.`));
-      if (o.status !== "shipped") changes.append(actionBox([], "Prepare cancellation", () => `Cancel order ${o.id}.`));
+      if (o.status !== "shipped" && o.status !== "completed") changes.append(actionBox([], "Prepare cancellation", () => `Cancel order ${o.id}.`));
     }
     return [
       "Order", `Order #${o.id}`,
