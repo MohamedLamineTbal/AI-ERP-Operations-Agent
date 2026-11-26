@@ -139,3 +139,17 @@ def test_stateful_select_functions_are_rejected(query: str) -> None:
 def test_malformed_sql_is_reported() -> None:
     with pytest.raises(ReadOnlySQLExecutionError):
         execute_readonly_sql("SELECT id, FROM customers")
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT pg_read_file('/etc/hosts')",
+        "SELECT * FROM pg_ls_dir('.')",
+        "SELECT rolname FROM pg_authid",
+        "SELECT query_to_xml('SELECT pg_read_file(''/etc/hosts'')', true, false, '')",
+    ],
+)
+def test_readonly_sql_cannot_reach_beyond_the_erp_tables(query: str) -> None:
+    with pytest.raises(ReadOnlySQLExecutionError, match="permission denied"):
+        execute_readonly_sql(query)

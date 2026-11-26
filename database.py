@@ -1,12 +1,18 @@
-"""SQLAlchemy setup and a minimal PostgreSQL connectivity check."""
+"""SQLAlchemy engines and a minimal PostgreSQL connectivity check.
+
+``engine`` runs the application's own queries and approved actions.
+``readonly_engine`` runs model-generated SQL as a login that can only read
+the ERP tables.
+"""
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
-from config import DATABASE_URL
+from config import DATABASE_URL, READONLY_DATABASE_URL
 
 
 engine: Engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+readonly_engine: Engine = create_engine(READONLY_DATABASE_URL, pool_pre_ping=True)
 
 
 def check_database_connection() -> bool:
