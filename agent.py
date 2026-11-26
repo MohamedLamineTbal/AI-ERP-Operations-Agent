@@ -135,7 +135,9 @@ def create_readonly_database() -> ReadOnlySQLDatabase:
         readonly_engine,
         schema="public",
         include_tables=ERP_TABLES,
-        sample_rows_in_table_info=2,
+        # No sample rows: they send customer records to the model on every question,
+        # and the schema's CHECK constraints already list every allowed status.
+        sample_rows_in_table_info=0,
     )
 
 

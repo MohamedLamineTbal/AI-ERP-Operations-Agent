@@ -130,6 +130,17 @@ WHERE id = 4;
 
 This separates AI-generated data retrieval from controlled application-side mutations.
 
+### Data sent to third parties
+
+Each question sends the following to Groq:
+
+* the question itself;
+* the database schema: tables, columns and constraints, with no table rows;
+* the rows the generated query returns, once to write the answer and once to check it.
+
+With LangSmith tracing enabled, every prompt and response, including those rows, is also stored in LangSmith. Keep
+tracing off when the database holds real customer data.
+
 ---
 
 ### SQL Validation and Error Recovery
