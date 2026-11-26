@@ -50,6 +50,14 @@ Adding a new business action means updating all of: an `*Input` model and functi
 **Config:** the LLM is Groq via `langchain-groq` (`GROQ_MODEL`, default `openai/gpt-oss-120b`). LangSmith tracing is optional and controlled by env vars. `config` must be imported before LangChain/LangGraph so `.env` is loaded before tracers initialize. `agent.py` and `graph.py` both do this deliberately.
 
 <!-- skrrt:ship -->
+## Architecture decisions
+
+`docs/decisions.md` is the ADR log. When a change makes a significant architectural or technical decision (new
+boundaries, providers, data flows, security controls, or anything costly to reverse), add an ADR or amend the existing
+one in the same change. Supersede rather than delete, and never renumber. Base every reason on the user's words, the
+code, or the project history; if no reason is recorded, leave it out and ask. Routine changes and implementation
+details get no ADR.
+
 ## Git workflow
 
 Use the Skrrt ship skills for git work: `commit` for commits, `pr` for pull and merge requests,
