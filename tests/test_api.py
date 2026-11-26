@@ -3,6 +3,8 @@
 import json
 from typing import Any
 
+import pytest
+
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
 from sqlalchemy import func, select
@@ -91,8 +93,20 @@ class PurchaseOrderNodes(QueryNodes):
         return ERPGraphNodes.finish_action(self, state)
 
 
+ACCESS_KEY = "test-access-key"
+
+
+def _anonymous_client(nodes: Any) -> TestClient:
+    app = create_app(
+        build_erp_graph(nodes), access_key=ACCESS_KEY, allowed_hosts=["testserver"]
+    )
+    return TestClient(app)
+
+
 def _client(nodes: Any) -> TestClient:
-    return TestClient(create_app(build_erp_graph(nodes)))
+    client = _anonymous_client(nodes)
+    assert client.post("/api/session", json={"key": ACCESS_KEY}).status_code == 200
+    return client
 
 
 def _events(response: Any) -> list[dict[str, Any]]:
@@ -191,3 +205,31 @@ def test_records_cover_every_table() -> None:
     assert all(records[name] for name in records)
     assert records["orders"][0]["items"]
     assert "cost" in records["products"][0]
+
+
+def test_every_api_route_requires_the_access_key() -> None:
+    client = _anonymous_client(QueryNodes())
+
+    assert client.get("/api/records").status_code == 401
+    assert client.get("/api/approvals").status_code == 401
+    assert client.get("/api/session").status_code == 401
+    assert client.post("/api/ask", json={"question": "Lowest stock?"}).status_code == 401
+    assert client.post("/api/approvals/any", json={"approved": True}).status_code == 401
+
+
+def test_a_wrong_access_key_does_not_open_a_session() -> None:
+    client = _anonymous_client(QueryNodes())
+
+    assert client.post("/api/session", json={"key": "guess"}).status_code == 401
+    assert client.get("/api/records").status_code == 401
+
+
+def test_requests_for_another_host_are_refused() -> None:
+    client = _client(QueryNodes())
+
+    assert client.get("/api/records", headers={"Host": "evil.example.com"}).status_code == 400
+
+
+def test_the_app_will_not_start_without_an_access_key() -> None:
+    with pytest.raises(RuntimeError, match="ERP_ACCESS_KEY"):
+        create_app(build_erp_graph(QueryNodes()), access_key="")

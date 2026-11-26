@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import SQLAlchemyError
 
-from database import engine
+from database import readonly_engine
 
 
 class ReadOnlySQLValidationError(ValueError):
@@ -219,7 +219,7 @@ def validate_readonly_sql(query: str) -> bool:
 
 def list_tables() -> list[str]:
     """Return the names of tables in PostgreSQL's public schema."""
-    return sorted(inspect(engine).get_table_names(schema="public"))
+    return sorted(inspect(readonly_engine).get_table_names(schema="public"))
 
 
 def get_table_schema(table_name: str) -> dict[str, Any]:
@@ -227,7 +227,7 @@ def get_table_schema(table_name: str) -> dict[str, Any]:
     if not isinstance(table_name, str) or table_name not in list_tables():
         raise ValueError(f"Unknown public table: {table_name!r}")
 
-    inspector = inspect(engine)
+    inspector = inspect(readonly_engine)
     primary_key = inspector.get_pk_constraint(table_name, schema="public")
 
     return {
@@ -259,7 +259,7 @@ def execute_readonly_sql(query: str) -> list[dict[str, Any]]:
     validate_readonly_sql(query)
 
     try:
-        with engine.connect() as connection:
+        with readonly_engine.connect() as connection:
             transaction = connection.begin()
             try:
                 connection.exec_driver_sql("SET TRANSACTION READ ONLY")

@@ -834,8 +834,33 @@
   }
   window.addEventListener("hashchange", () => show(location.hash.slice(1)));
 
+  /* Access key */
+  function showLogin() {
+    document.getElementById("view-desk").hidden = true;
+    document.getElementById("view-records").hidden = true;
+    document.getElementById("view-login").hidden = false;
+    const form = document.getElementById("login-form");
+    const input = document.getElementById("access-key");
+    const hint = document.getElementById("login-hint");
+    input.focus();
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!input.value) return;
+      try {
+        await fetchJSON("/api/session", { method: "POST", body: JSON.stringify({ key: input.value }) });
+        location.reload();
+      } catch (e) {
+        hint.textContent = e.message;
+        hint.hidden = false;
+        input.select();
+      }
+    });
+  }
+
   /* Start */
   (async function start() {
+    const session = await fetch("/api/session").catch(() => null);
+    if (session && session.status === 401) return showLogin();
     renderPending();
     show(location.hash.slice(1));
     await loadRecords();

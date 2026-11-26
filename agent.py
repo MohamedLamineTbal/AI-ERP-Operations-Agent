@@ -12,7 +12,7 @@ from langchain_community.agent_toolkits import SQLDatabaseToolkit, create_sql_ag
 from langchain_community.utilities import SQLDatabase
 from langchain_groq import ChatGroq
 
-from database import engine
+from database import readonly_engine
 from tools.sql_tools import (
     ReadOnlySQLExecutionError,
     ReadOnlySQLValidationError,
@@ -132,7 +132,7 @@ class ReadOnlySQLDatabase(SQLDatabase):
 def create_readonly_database() -> ReadOnlySQLDatabase:
     """Create the LangChain SQLDatabase view over the six ERP tables."""
     return ReadOnlySQLDatabase(
-        engine,
+        readonly_engine,
         schema="public",
         include_tables=ERP_TABLES,
         sample_rows_in_table_info=2,

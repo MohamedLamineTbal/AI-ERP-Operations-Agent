@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import secrets
+from collections.abc import Sequence
 from typing import Any, Iterator, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, Cookie, Depends, FastAPI, HTTPException, Response
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from config import BASE_DIR
+from config import ACCESS_KEY, BASE_DIR
 from database import engine
 from graph import (
     build_erp_graph,
@@ -47,6 +51,14 @@ class AskRequest(BaseModel):
 
 class Decision(BaseModel):
     approved: bool
+
+
+class SessionRequest(BaseModel):
+    key: str = Field(min_length=1, max_length=500)
+
+
+SESSION_COOKIE = "erp_session"
+LOCAL_HOSTS = ("127.0.0.1", "localhost")
 
 
 def _line(event: dict[str, Any]) -> str:
@@ -141,9 +153,32 @@ def _records(session: Session) -> dict[str, list[dict[str, Any]]]:
     }
 
 
-def create_app(graph: Optional[Any] = None) -> FastAPI:
-    """Build the API. The graph is created on first use unless one is injected."""
+def create_app(
+    graph: Optional[Any] = None,
+    *,
+    access_key: Optional[str] = None,
+    allowed_hosts: Sequence[str] = LOCAL_HOSTS,
+) -> FastAPI:
+    """Build the API. The graph is created on first use unless one is injected.
+
+    Every /api route needs a session cookie, opened by posting the access key
+    to /api/session. Requests for any host other than allowed_hosts are
+    refused, so a page that rebinds its domain to this machine cannot reach it.
+    """
+    key = ACCESS_KEY if access_key is None else access_key
+    if not key:
+        raise RuntimeError(
+            "ERP_ACCESS_KEY is not set. Add a long random access key to .env."
+        )
+    session_token = hashlib.sha256(f"erp-session:{key}".encode()).hexdigest()
+
+    def require_session(erp_session: Optional[str] = Cookie(None)) -> None:
+        if not erp_session or not secrets.compare_digest(erp_session, session_token):
+            raise HTTPException(401, "Enter the access key to continue.")
+
     app = FastAPI(title="ERP Operations Agent")
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(allowed_hosts))
+    api = APIRouter(prefix="/api", dependencies=[Depends(require_session)])
     compiled = {"graph": graph}
     pending: dict[str, dict[str, Any]] = {}
 
@@ -156,16 +191,29 @@ def create_app(graph: Optional[Any] = None) -> FastAPI:
                 raise HTTPException(503, "The assistant is not available right now.")
         return compiled["graph"]
 
-    @app.get("/api/records")
+    @app.post("/api/session")
+    def open_session(request: SessionRequest, response: Response) -> dict[str, bool]:
+        if not secrets.compare_digest(request.key.encode(), key.encode()):
+            raise HTTPException(401, "That access key is wrong.")
+        response.set_cookie(
+            SESSION_COOKIE, session_token, httponly=True, samesite="strict"
+        )
+        return {"ok": True}
+
+    @api.get("/session")
+    def session() -> dict[str, bool]:
+        return {"ok": True}
+
+    @api.get("/records")
     def records() -> dict[str, list[dict[str, Any]]]:
         with Session(engine) as session:
             return _records(session)
 
-    @app.get("/api/approvals")
+    @api.get("/approvals")
     def approvals() -> list[dict[str, Any]]:
         return list(pending.values())
 
-    @app.post("/api/ask")
+    @api.post("/ask")
     def ask(request: AskRequest) -> StreamingResponse:
         try:
             start = initial_state(request.question)
@@ -203,7 +251,7 @@ def create_app(graph: Optional[Any] = None) -> FastAPI:
 
         return StreamingResponse(events(), media_type="application/x-ndjson")
 
-    @app.post("/api/approvals/{approval_id}")
+    @api.post("/approvals/{approval_id}")
     def decide(approval_id: str, decision: Decision) -> dict[str, Any]:
         if approval_id not in pending:
             raise HTTPException(404, "No change with that id is waiting for approval.")
@@ -220,6 +268,7 @@ def create_app(graph: Optional[Any] = None) -> FastAPI:
             "results": (values.get("action_results") or []) if applied else [],
         }
 
+    app.include_router(api)
     app.mount("/", StaticFiles(directory=BASE_DIR / "web", html=True), name="web")
     return app
 

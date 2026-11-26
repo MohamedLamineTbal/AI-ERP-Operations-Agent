@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 pip install -r requirements.txt        # deps (use a .venv)
-cp .env.example .env                   # then set DATABASE_URL and GROQ_API_KEY
-python3 seed.py                        # create tables + seed sample data (skips if customers exist)
+cp .env.example .env                   # then set DATABASE_URL, READONLY_DATABASE_URL, GROQ_API_KEY, and ERP_ACCESS_KEY
+python3 seed.py                        # create tables + the erp_readonly login, seed sample data (skips if customers exist)
 uvicorn api:app --reload               # web app at http://127.0.0.1:8000 (Desk + Records)
 python3 main.py                        # interactive terminal: one question per run, y/n approval prompt
 pytest                                 # full suite
@@ -17,7 +17,7 @@ pytest tests/test_graph.py::test_name  # single test
 There is no lint/format configuration in the repo.
 
 Testing notes:
-- `config.py` raises at import time if `DATABASE_URL` is unset, so almost every module (and test) needs a `.env`.
+- `config.py` raises at import time if `DATABASE_URL` or `READONLY_DATABASE_URL` is unset, so almost every module (and test) needs a `.env`.
 - `test_database.py`, `test_action_tools.py`, `test_agent.py`, `test_graph_approval.py`, and `test_multi_step_actions.py` hit a real, seeded PostgreSQL database. Action tests write rows and clean up in `finally` blocks.
 - Graph tests avoid Groq by injecting fake node classes into `build_erp_graph(nodes=...)` or fake LLMs into `ERPGraphNodes(llm=...)`. Follow that pattern rather than calling the real model.
 - `test_tracing_config.py` asserts exact values in `.env.example` and `requirements.txt` (LangSmith tracing off by default, `langsmith>=0.4,<1.0`). Update it if you change either file.
@@ -26,7 +26,7 @@ Testing notes:
 
 A natural-language ERP assistant over PostgreSQL. Reads go through LLM-generated, read-only SQL. Writes go only through fixed Python business tools, and only after a human approves them.
 
-**Entry paths:** `main.py` (terminal) and `api.py` (FastAPI, serves `web/`) both drive `graph.py` (`build_erp_graph`, `initial_state`, `run_erp_graph`, `resume_erp_graph`). `POST /api/ask` streams NDJSON events: one `step` per graph node (`STEP_LABELS`), then an `answer` or an `approval`. Pending approvals live in memory in `create_app` and are resumed by `POST /api/approvals/{id}`; they are lost when the server restarts. The API never returns internal error text to the browser; details go to the `erp_agent` log. `GET /api/records` returns every table for the Records pages, and `web/app.js` derives summaries, filters, and detail panels from it. The LangGraph `StateGraph` uses an `InMemorySaver` checkpointer. `request_approval` calls `interrupt()`, the caller reads the payload with `get_interrupt_payload`, then resumes on the same `thread_id` with `Command(resume="approved"|"rejected")`.
+**Entry paths:** `main.py` (terminal) and `api.py` (FastAPI, serves `web/`) both drive `graph.py` (`build_erp_graph`, `initial_state`, `run_erp_graph`, `resume_erp_graph`). Every `/api` route needs the `erp_session` cookie, set by `POST /api/session` with `ERP_ACCESS_KEY`; `create_app` refuses to start without a key, and `TrustedHostMiddleware` only accepts `127.0.0.1`/`localhost`. API tests open a session through `_client` in `tests/test_api.py`. `POST /api/ask` streams NDJSON events: one `step` per graph node (`STEP_LABELS`), then an `answer` or an `approval`. Pending approvals live in memory in `create_app` and are resumed by `POST /api/approvals/{id}`; they are lost when the server restarts. The API never returns internal error text to the browser; details go to the `erp_agent` log. `GET /api/records` returns every table for the Records pages, and `web/app.js` derives summaries, filters, and detail panels from it. The LangGraph `StateGraph` uses an `InMemorySaver` checkpointer. `request_approval` calls `interrupt()`, the caller reads the payload with `get_interrupt_payload`, then resumes on the same `thread_id` with `Command(resume="approved"|"rejected")`.
 
 **Graph flow (`graph.py`):**
 - `understand_request` sorts each request into one of four kinds: `query`, `action` (one directly identified record), `query_action` (select matching rows first, then act on every match), or `other` (greetings and off-topic requests, which get the fixed `OFF_TOPIC_ANSWER` and go straight to `record_outcome`). `_infer_query_action` checks with regex before the LLM classifier runs ("restock all low-stock products", "remind all overdue invoices"). Only `create_purchase_order` and `mark_invoice_reminder_sent` support `query_action`.
@@ -37,7 +37,7 @@ A natural-language ERP assistant over PostgreSQL. Reads go through LLM-generated
 - Nodes report failures by writing `state["error"]`; they don't raise. Routing functions (`_route_*`) branch on `error`, `request_type`, `retry_count`, and `approval_status`.
 
 **Three tool layers in `tools/` (keep them separate):**
-- `sql_tools.py` is the read-only boundary. A custom tokenizer ignores comments and string literals, then rejects forbidden keywords and side-effecting functions (`FORBIDDEN_KEYWORDS`, `FORBIDDEN_FUNCTIONS`). Execution runs inside `SET TRANSACTION READ ONLY` with a 5s `statement_timeout`, and the transaction always rolls back. All model-generated SQL must go through `validate_readonly_sql` / `execute_readonly_sql`.
+- `sql_tools.py` is the read-only boundary. A custom tokenizer ignores comments and string literals, then rejects forbidden keywords and side-effecting functions (`FORBIDDEN_KEYWORDS`, `FORBIDDEN_FUNCTIONS`). Execution runs on `readonly_engine` (`READONLY_DATABASE_URL`), a login `seed.py` creates with `SELECT` on the six ERP tables and nothing else, inside `SET TRANSACTION READ ONLY` with a 5s `statement_timeout`, and the transaction always rolls back. That login is the real boundary; the tokenizer is a first filter. Never point it at a superuser or the `DATABASE_URL` login. All model-generated SQL must go through `validate_readonly_sql` / `execute_readonly_sql`.
 - `action_tools.py` holds the real mutating functions (ORM-based, Pydantic `*Input` models with `extra="forbid"`, `BusinessActionError` for rule violations). They accept an optional `_session` so the graph can batch them. They are never exposed to the LLM directly.
 - `proposal_tools.py` holds the LLM-facing tools with the same names (`create_purchase_order`, `cancel_order`, ...). They only return a `PendingAction` JSON describing `what_will_change`. `prepare_action_proposal` binds them to the LLM, and a regex-based `_fallback_action_proposal` covers cases where the model doesn't call a tool.
 

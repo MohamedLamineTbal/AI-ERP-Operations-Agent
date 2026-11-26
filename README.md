@@ -110,6 +110,8 @@ GRANT
 REVOKE
 ```
 
+The database enforces this too. Model-generated SQL runs as a separate login, `erp_readonly`, that can only `SELECT` from the six ERP tables. It has no superuser rights, so it cannot read server files, other tables, or database settings, even if a query gets past the keyword checks.
+
 Database modifications must instead go through explicitly defined and validated business tools.
 
 For example:
@@ -388,7 +390,10 @@ Configure your PostgreSQL connection:
 
 ```env
 DATABASE_URL=postgresql+psycopg://USERNAME:PASSWORD@localhost:5432/erp_ai
+READONLY_DATABASE_URL=postgresql+psycopg://erp_readonly:A_LONG_RANDOM_PASSWORD@localhost:5432/erp_ai
 ```
+
+`DATABASE_URL` needs a login that can create tables and roles. `READONLY_DATABASE_URL` names the read-only login that model-generated SQL runs as. It must be a different login; the seed script creates it with that name and password.
 
 Then initialize/seed the database using the project's seed script.
 
@@ -419,9 +424,12 @@ Example `.env.example`:
 
 ```env
 DATABASE_URL=postgresql+psycopg://USERNAME:PASSWORD@localhost:5432/erp_ai
+READONLY_DATABASE_URL=postgresql+psycopg://erp_readonly:A_LONG_RANDOM_PASSWORD@localhost:5432/erp_ai
 
 GROQ_API_KEY=your_groq_api_key_here
 GROQ_MODEL=openai/gpt-oss-120b
+
+ERP_ACCESS_KEY=A_LONG_RANDOM_KEY
 
 LANGSMITH_TRACING=false
 LANGSMITH_API_KEY=
@@ -441,7 +449,7 @@ Start the server:
 uvicorn api:app --reload
 ```
 
-Then open http://127.0.0.1:8000. The **Desk** is where you ask questions and approve or reject changes. **Records** lets you browse customers, products, orders, invoices, and purchase orders, and prepare changes from any record. Every change still waits for your approval.
+Then open http://127.0.0.1:8000 and enter the `ERP_ACCESS_KEY` from `.env` once; the browser keeps a session cookie after that. The server only answers requests addressed to `127.0.0.1` or `localhost`. The **Desk** is where you ask questions and approve or reject changes. **Records** lets you browse customers, products, orders, invoices, and purchase orders, and prepare changes from any record. Every change still waits for your approval.
 
 ### Terminal
 
