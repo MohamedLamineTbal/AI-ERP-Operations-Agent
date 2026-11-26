@@ -18,7 +18,7 @@ There is no lint/format configuration in the repo.
 
 Testing notes:
 - `config.py` raises at import time if `DATABASE_URL` or `READONLY_DATABASE_URL` is unset, so almost every module (and test) needs a `.env`.
-- `test_database.py`, `test_action_tools.py`, `test_agent.py`, `test_graph_approval.py`, and `test_multi_step_actions.py` hit a real, seeded PostgreSQL database. Action tests write rows and clean up in `finally` blocks.
+- Tests never touch the development database. `tests/conftest.py` repoints `DATABASE_URL` and `READONLY_DATABASE_URL` at `TEST_DATABASE_URL` before anything imports `config`, refuses to run if it is the development database, rebuilds it from the seed at the start of each run, and reseeds after any test that committed a write. So database tests can rely on fresh seed data, and don't need cleanup to protect real data. Any module that loads `config` at import time must keep working under that override.
 - Graph tests avoid Groq by injecting fake node classes into `build_erp_graph(nodes=...)` or fake LLMs into `ERPGraphNodes(llm=...)`. Follow that pattern rather than calling the real model.
 - `test_tracing_config.py` asserts exact values in `.env.example` and `requirements.txt` (LangSmith tracing off by default, `langsmith>=0.4,<1.0`). Update it if you change either file.
 
