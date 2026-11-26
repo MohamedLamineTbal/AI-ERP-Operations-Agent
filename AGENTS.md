@@ -20,6 +20,7 @@ Testing notes:
 - `config.py` raises at import time if `DATABASE_URL` or `READONLY_DATABASE_URL` is unset, so almost every module (and test) needs a `.env`.
 - `test_database.py`, `test_action_tools.py`, `test_agent.py`, `test_graph_approval.py`, and `test_multi_step_actions.py` hit a real, seeded PostgreSQL database. Action tests write rows and clean up in `finally` blocks.
 - Graph tests avoid Groq by injecting fake node classes into `build_erp_graph(nodes=...)` or fake LLMs into `ERPGraphNodes(llm=...)`. Follow that pattern rather than calling the real model.
+- CI (GitHub Actions) runs `seed.py` and the full suite on every pull request against a throwaway PostgreSQL 16, with dummy values for every secret. No test may need a real Groq key, LangSmith, or network access beyond the database.
 - `test_tracing_config.py` asserts exact values in `.env.example` and `requirements.txt` (LangSmith tracing off by default, `langsmith>=0.4,<1.0`). Update it if you change either file.
 
 ## Architecture
