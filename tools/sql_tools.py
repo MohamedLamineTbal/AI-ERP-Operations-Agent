@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, NamedTuple
 
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import SQLAlchemyError
@@ -17,6 +17,14 @@ class ReadOnlySQLValidationError(ValueError):
 
 class ReadOnlySQLExecutionError(RuntimeError):
     """Raised when PostgreSQL cannot execute a validated read-only query."""
+
+
+MAX_RESULT_ROWS = 1000
+
+
+class QueryResult(NamedTuple):
+    rows: list[dict[str, Any]]
+    truncated: bool
 
 
 FORBIDDEN_KEYWORDS = {
@@ -254,8 +262,12 @@ def get_table_schema(table_name: str) -> dict[str, Any]:
     }
 
 
-def execute_readonly_sql(query: str) -> list[dict[str, Any]]:
-    """Execute a validated SELECT in a PostgreSQL read-only transaction."""
+def execute_readonly_sql(query: str, max_rows: int = MAX_RESULT_ROWS) -> QueryResult:
+    """Execute a validated SELECT in a PostgreSQL read-only transaction.
+
+    Returns at most ``max_rows`` rows; ``truncated`` is True when more matched.
+    A server-side cursor keeps the rows beyond the cap out of memory.
+    """
     validate_readonly_sql(query)
 
     try:
@@ -264,8 +276,11 @@ def execute_readonly_sql(query: str) -> list[dict[str, Any]]:
             try:
                 connection.exec_driver_sql("SET TRANSACTION READ ONLY")
                 connection.exec_driver_sql("SET LOCAL statement_timeout = '5s'")
-                result = connection.execute(text(query))
-                rows = [dict(row._mapping) for row in result]
+                result = connection.execution_options(stream_results=True).execute(
+                    text(query)
+                )
+                fetched = result.fetchmany(max_rows + 1)
+                result.close()
             finally:
                 transaction.rollback()
     except SQLAlchemyError as error:
@@ -274,4 +289,7 @@ def execute_readonly_sql(query: str) -> list[dict[str, Any]]:
             f"PostgreSQL could not execute the read-only query: {details}"
         ) from error
 
-    return rows
+    return QueryResult(
+        rows=[dict(row._mapping) for row in fetched[:max_rows]],
+        truncated=len(fetched) > max_rows,
+    )

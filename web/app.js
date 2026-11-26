@@ -379,7 +379,10 @@
 
   function resultFor(event) {
     if (event.type === "approval") return slip(event);
-    if (event.type === "answer") return answer({ text: event.answer, body: [resultTable(event.rows)], checked: event.verified });
+    if (event.type === "answer") {
+      const cut = event.truncated ? el("p", "form-hint", `Showing the first ${event.rows.length} rows. More matched; ask a narrower question to see the rest.`) : null;
+      return answer({ text: event.answer, body: [resultTable(event.rows), cut], checked: event.verified });
+    }
     return answer({ text: event.message || "Something went wrong. Nothing was changed." });
   }
 
