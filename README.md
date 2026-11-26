@@ -429,6 +429,8 @@ READONLY_DATABASE_URL=postgresql+psycopg://erp_readonly:A_LONG_RANDOM_PASSWORD@l
 GROQ_API_KEY=your_groq_api_key_here
 GROQ_MODEL=openai/gpt-oss-120b
 
+ERP_ACCESS_KEY=A_LONG_RANDOM_KEY
+
 LANGSMITH_TRACING=false
 LANGSMITH_API_KEY=
 LANGSMITH_PROJECT=erp-ai-agent
@@ -447,7 +449,7 @@ Start the server:
 uvicorn api:app --reload
 ```
 
-Then open http://127.0.0.1:8000. The **Desk** is where you ask questions and approve or reject changes. **Records** lets you browse customers, products, orders, invoices, and purchase orders, and prepare changes from any record. Every change still waits for your approval.
+Then open http://127.0.0.1:8000 and enter the `ERP_ACCESS_KEY` from `.env` once; the browser keeps a session cookie after that. The server only answers requests addressed to `127.0.0.1` or `localhost`. The **Desk** is where you ask questions and approve or reject changes. **Records** lets you browse customers, products, orders, invoices, and purchase orders, and prepare changes from any record. Every change still waits for your approval.
 
 ### Terminal
 

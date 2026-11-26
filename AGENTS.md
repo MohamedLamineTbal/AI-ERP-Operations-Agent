@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 pip install -r requirements.txt        # deps (use a .venv)
-cp .env.example .env                   # then set DATABASE_URL, READONLY_DATABASE_URL, and GROQ_API_KEY
+cp .env.example .env                   # then set DATABASE_URL, READONLY_DATABASE_URL, GROQ_API_KEY, and ERP_ACCESS_KEY
 python3 seed.py                        # create tables + the erp_readonly login, seed sample data (skips if customers exist)
 uvicorn api:app --reload               # web app at http://127.0.0.1:8000 (Desk + Records)
 python3 main.py                        # interactive terminal: one question per run, y/n approval prompt
@@ -26,7 +26,7 @@ Testing notes:
 
 A natural-language ERP assistant over PostgreSQL. Reads go through LLM-generated, read-only SQL. Writes go only through fixed Python business tools, and only after a human approves them.
 
-**Entry paths:** `main.py` (terminal) and `api.py` (FastAPI, serves `web/`) both drive `graph.py` (`build_erp_graph`, `initial_state`, `run_erp_graph`, `resume_erp_graph`). `POST /api/ask` streams NDJSON events: one `step` per graph node (`STEP_LABELS`), then an `answer` or an `approval`. Pending approvals live in memory in `create_app` and are resumed by `POST /api/approvals/{id}`; they are lost when the server restarts. The API never returns internal error text to the browser; details go to the `erp_agent` log. `GET /api/records` returns every table for the Records pages, and `web/app.js` derives summaries, filters, and detail panels from it. The LangGraph `StateGraph` uses an `InMemorySaver` checkpointer. `request_approval` calls `interrupt()`, the caller reads the payload with `get_interrupt_payload`, then resumes on the same `thread_id` with `Command(resume="approved"|"rejected")`.
+**Entry paths:** `main.py` (terminal) and `api.py` (FastAPI, serves `web/`) both drive `graph.py` (`build_erp_graph`, `initial_state`, `run_erp_graph`, `resume_erp_graph`). Every `/api` route needs the `erp_session` cookie, set by `POST /api/session` with `ERP_ACCESS_KEY`; `create_app` refuses to start without a key, and `TrustedHostMiddleware` only accepts `127.0.0.1`/`localhost`. API tests open a session through `_client` in `tests/test_api.py`. `POST /api/ask` streams NDJSON events: one `step` per graph node (`STEP_LABELS`), then an `answer` or an `approval`. Pending approvals live in memory in `create_app` and are resumed by `POST /api/approvals/{id}`; they are lost when the server restarts. The API never returns internal error text to the browser; details go to the `erp_agent` log. `GET /api/records` returns every table for the Records pages, and `web/app.js` derives summaries, filters, and detail panels from it. The LangGraph `StateGraph` uses an `InMemorySaver` checkpointer. `request_approval` calls `interrupt()`, the caller reads the payload with `get_interrupt_payload`, then resumes on the same `thread_id` with `Command(resume="approved"|"rejected")`.
 
 **Graph flow (`graph.py`):**
 - `understand_request` sorts each request into one of four kinds: `query`, `action` (one directly identified record), `query_action` (select matching rows first, then act on every match), or `other` (greetings and off-topic requests, which get the fixed `OFF_TOPIC_ANSWER` and go straight to `record_outcome`). `_infer_query_action` checks with regex before the LLM classifier runs ("restock all low-stock products", "remind all overdue invoices"). Only `create_purchase_order` and `mark_invoice_reminder_sent` support `query_action`.

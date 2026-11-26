@@ -13,6 +13,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 READONLY_DATABASE_URL = os.getenv("READONLY_DATABASE_URL")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+ACCESS_KEY = os.getenv("ERP_ACCESS_KEY")
 
 if not DATABASE_URL:
     raise RuntimeError(

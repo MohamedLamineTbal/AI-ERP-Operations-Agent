@@ -28,6 +28,20 @@
     </div>
     <nav class="nav-strip" id="nav-strip" aria-label="Sections"></nav>
 
+    <section class="view" id="view-login" aria-labelledby="login-title" hidden>
+      <div class="thread"><div class="thread-inner">
+        <div class="desk-empty">
+          <p class="lead" id="login-title">Enter your access key</p>
+          <p>It's the <code>ERP_ACCESS_KEY</code> value in the project's <code>.env</code> file. You only need to enter it once in this browser.</p>
+          <form class="ask-form" id="login-form" novalidate>
+            <input id="access-key" name="access-key" type="password" autocomplete="current-password" aria-label="Access key" aria-describedby="login-hint">
+            <button class="btn btn-ask" type="submit">Open</button>
+          </form>
+          <p class="form-hint" id="login-hint" hidden></p>
+        </div>
+      </div></div>
+    </section>
+
     <section class="view" id="view-desk" aria-label="Desk">
       <div class="thread" id="thread"><div class="thread-inner" id="thread-inner">
         <div class="desk-empty" id="desk-empty">
