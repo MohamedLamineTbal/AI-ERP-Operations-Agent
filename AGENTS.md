@@ -21,6 +21,7 @@ Testing notes:
 - Tests never touch the development database. `tests/conftest.py` repoints the URLs before anything imports `config`: `TEST_DATABASE_URL` (a login that can create tables and roles) becomes `DATABASE_ADMIN_URL`, and `DATABASE_URL` and `READONLY_DATABASE_URL` keep their logins but use the test database. It refuses to run if that is the development database, rebuilds it from the seed at the start of each run, and reseeds after any test that committed a write. So database tests can rely on fresh seed data, and don't need cleanup to protect real data. Any module that loads `config` at import time must keep working under that override.
 - The app login can't delete rows or update most columns, so tests arrange data through `admin_engine` (`seed.create_admin_engine()`), and run the code under test on the app's own engines.
 - Graph tests avoid Groq by injecting fake node classes into `build_erp_graph(nodes=...)` or fake LLMs into `ERPGraphNodes(llm=...)`. Follow that pattern rather than calling the real model.
+- CI (GitHub Actions) installs from `uv.lock` and runs the full suite on every pull request against a throwaway PostgreSQL 16, with dummy values for every secret. No test may need a real Groq key, LangSmith, or network access beyond the database. A second job fails on any known vulnerability in the locked dependencies.
 - `test_tracing_config.py` asserts that `.env.example` keeps LangSmith tracing off by default. Update it if you change that file.
 
 ## Architecture

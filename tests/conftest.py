@@ -77,17 +77,17 @@ def _reseed() -> None:
     _wrote["flag"] = False
 
 
-@pytest.fixture(scope="session", autouse=True)
-def test_database():
+def pytest_sessionstart(session):
+    # Before collection, because test modules build the app at import time and
+    # the app checks its login, which the seed creates.
     _create_test_database_if_missing()
     Base.metadata.drop_all(_admin)
     seed_database()
     _wrote["flag"] = False
-    yield
 
 
 @pytest.fixture(autouse=True)
-def fresh_data_after_writes(test_database):
+def fresh_data_after_writes():
     yield
     if _wrote["flag"]:
         _reseed()
