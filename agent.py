@@ -7,7 +7,7 @@ from typing import Any, Optional, Union
 # Load .env before LangChain initializes its environment-driven tracers.
 from config import GROQ_API_KEY, GROQ_MODEL
 
-from langchain.agents import AgentExecutor
+from langchain_classic.agents import AgentExecutor
 from langchain_community.agent_toolkits import SQLDatabaseToolkit, create_sql_agent
 from langchain_community.utilities import SQLDatabase
 from langchain_groq import ChatGroq

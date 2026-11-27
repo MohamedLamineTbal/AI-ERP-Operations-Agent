@@ -5,13 +5,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-pip install -r requirements.txt        # deps (use a .venv)
-cp .env.example .env                   # then set DATABASE_ADMIN_URL, DATABASE_URL, READONLY_DATABASE_URL, GROQ_API_KEY, and ERP_ACCESS_KEY
-python3 seed.py                        # as the admin login: create tables + the erp_app and erp_readonly logins, seed sample data (skips if customers exist)
-uvicorn api:app --reload               # web app at http://127.0.0.1:8000 (Desk + Records)
-python3 main.py                        # interactive terminal: one question per run, y/n approval prompt
-pytest                                 # full suite
-pytest tests/test_graph.py::test_name  # single test
+uv sync                                # Python 3.12 + exact locked deps into .venv; edit pyproject.toml, then `uv lock`, to change them
+cp .env.example .env                   # then set DATABASE_ADMIN_URL, DATABASE_URL, READONLY_DATABASE_URL, TEST_DATABASE_URL, GROQ_API_KEY, and ERP_ACCESS_KEY
+uv run python seed.py                  # as the admin login: create tables + the erp_app and erp_readonly logins, seed sample data (skips if customers exist)
+uv run uvicorn api:app --reload        # web app at http://127.0.0.1:8000 (Desk + Records)
+uv run python main.py                  # interactive terminal: one question per run, y/n approval prompt
+uv run pytest                          # full suite
+uv run pytest tests/test_graph.py::test_name  # single test
 ```
 
 There is no lint/format configuration in the repo.
@@ -21,7 +21,7 @@ Testing notes:
 - Tests never touch the development database. `tests/conftest.py` repoints the URLs before anything imports `config`: `TEST_DATABASE_URL` (a login that can create tables and roles) becomes `DATABASE_ADMIN_URL`, and `DATABASE_URL` and `READONLY_DATABASE_URL` keep their logins but use the test database. It refuses to run if that is the development database, rebuilds it from the seed at the start of each run, and reseeds after any test that committed a write. So database tests can rely on fresh seed data, and don't need cleanup to protect real data. Any module that loads `config` at import time must keep working under that override.
 - The app login can't delete rows or update most columns, so tests arrange data through `admin_engine` (`seed.create_admin_engine()`), and run the code under test on the app's own engines.
 - Graph tests avoid Groq by injecting fake node classes into `build_erp_graph(nodes=...)` or fake LLMs into `ERPGraphNodes(llm=...)`. Follow that pattern rather than calling the real model.
-- `test_tracing_config.py` asserts exact values in `.env.example` and `requirements.txt` (LangSmith tracing off by default, `langsmith>=0.4,<1.0`). Update it if you change either file.
+- `test_tracing_config.py` asserts that `.env.example` keeps LangSmith tracing off by default. Update it if you change that file.
 
 ## Architecture
 

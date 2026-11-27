@@ -334,7 +334,8 @@ erp-ai-agent/
 │
 ├── .env.example
 ├── .gitignore
-├── requirements.txt
+├── pyproject.toml
+├── uv.lock
 └── README.md
 ```
 
@@ -348,29 +349,17 @@ git clone <YOUR_REPOSITORY_URL>
 cd erp-ai-agent
 ```
 
-### 2. Create a virtual environment
+### 2. Install the dependencies
+
+The project needs Python 3.12 or later and uses [uv](https://docs.astral.sh/uv/) to install exact, locked versions. Install uv, then run:
 
 ```bash
-python3 -m venv .venv
+uv sync
 ```
 
-Activate it on macOS/Linux:
+This creates `.venv` with the Python version in `.python-version` (uv downloads it if needed) and installs the versions pinned in `uv.lock`. Run the project's commands with `uv run`, or activate `.venv` first.
 
-```bash
-source .venv/bin/activate
-```
-
-On Windows:
-
-```bash
-.venv\Scripts\activate
-```
-
-### 3. Install dependencies
-
-```bash
-pip install -r requirements.txt
-```
+To change a dependency, edit `pyproject.toml` and run `uv lock`.
 
 
 
@@ -407,7 +396,7 @@ Then initialize/seed the database using the project's seed script.
 For example:
 
 ```bash
-python3 seed.py
+uv run python seed.py
 ```
 
 
@@ -454,7 +443,7 @@ LangSmith configuration is optional.
 Start the server:
 
 ```bash
-uvicorn api:app --reload
+uv run uvicorn api:app --reload
 ```
 
 Then open http://127.0.0.1:8000 and enter the `ERP_ACCESS_KEY` from `.env` once; the browser keeps a session cookie after that. The server only answers requests addressed to `127.0.0.1` or `localhost`. The **Desk** is where you ask questions and approve or reject changes. **Records** lets you browse customers, products, orders, invoices, and purchase orders, and prepare changes from any record. Every change still waits for your approval.
@@ -464,7 +453,7 @@ Then open http://127.0.0.1:8000 and enter the `ERP_ACCESS_KEY` from `.env` once;
 Start the terminal application:
 
 ```bash
-python3 main.py
+uv run python main.py
 ```
 
 Then ask a question:
@@ -549,7 +538,14 @@ TEST_DATABASE_URL=postgresql+psycopg://USERNAME:PASSWORD@localhost:5432/erp_ai_t
 Run the automated test suite with:
 
 ```bash
-pytest
+uv run pytest
+```
+
+Check the locked dependencies for known vulnerabilities with:
+
+```bash
+uv export --format requirements-txt --no-hashes --no-emit-project > /tmp/requirements.txt
+uv run pip-audit -r /tmp/requirements.txt --no-deps --disable-pip
 ```
 
 Each run rebuilds the test database from the seed data, and any test that writes is followed by a fresh seed.
