@@ -112,6 +112,8 @@ REVOKE
 
 The database enforces this too. Model-generated SQL runs as a separate login, `erp_readonly`, that can only `SELECT` from the six ERP tables. It has no superuser rights, so it cannot read server files, other tables, or database settings, even if a query gets past the keyword checks.
 
+The rest of the app runs as `erp_app`, which can read the ERP tables and make only the writes the business tools make: add purchase orders, change an order's status, and record invoice reminders. It cannot delete rows, change the schema, or manage logins, and the app refuses to start if its login could.
+
 Database modifications must instead go through explicitly defined and validated business tools.
 
 For example:
@@ -389,11 +391,16 @@ cp .env.example .env
 Configure your PostgreSQL connection:
 
 ```env
-DATABASE_URL=postgresql+psycopg://USERNAME:PASSWORD@localhost:5432/erp_ai
-READONLY_DATABASE_URL=postgresql+psycopg://erp_readonly:A_LONG_RANDOM_PASSWORD@localhost:5432/erp_ai
+DATABASE_ADMIN_URL=postgresql+psycopg://USERNAME:PASSWORD@localhost:5432/erp_ai
+DATABASE_URL=postgresql+psycopg://erp_app:A_LONG_RANDOM_PASSWORD@localhost:5432/erp_ai
+READONLY_DATABASE_URL=postgresql+psycopg://erp_readonly:ANOTHER_LONG_RANDOM_PASSWORD@localhost:5432/erp_ai
 ```
 
-`DATABASE_URL` needs a login that can create tables and roles. `READONLY_DATABASE_URL` names the read-only login that model-generated SQL runs as. It must be a different login; the seed script creates it with that name and password.
+The app uses three logins, and each must be different:
+
+- `DATABASE_ADMIN_URL` is a login that can create tables and roles, such as `postgres`. Only the seed script uses it.
+- `DATABASE_URL` is the login the app runs as. The seed script creates `erp_app` with this name and password, with only the rights the business tools need.
+- `READONLY_DATABASE_URL` is the login model-generated SQL runs as. The seed script creates it with this name and password, with `SELECT` on the ERP tables only.
 
 Then initialize/seed the database using the project's seed script.
 
@@ -423,8 +430,9 @@ GROQ_MODEL=openai/gpt-oss-120b
 Example `.env.example`:
 
 ```env
-DATABASE_URL=postgresql+psycopg://USERNAME:PASSWORD@localhost:5432/erp_ai
-READONLY_DATABASE_URL=postgresql+psycopg://erp_readonly:A_LONG_RANDOM_PASSWORD@localhost:5432/erp_ai
+DATABASE_ADMIN_URL=postgresql+psycopg://USERNAME:PASSWORD@localhost:5432/erp_ai
+DATABASE_URL=postgresql+psycopg://erp_app:A_LONG_RANDOM_PASSWORD@localhost:5432/erp_ai
+READONLY_DATABASE_URL=postgresql+psycopg://erp_readonly:ANOTHER_LONG_RANDOM_PASSWORD@localhost:5432/erp_ai
 
 GROQ_API_KEY=your_groq_api_key_here
 GROQ_MODEL=openai/gpt-oss-120b

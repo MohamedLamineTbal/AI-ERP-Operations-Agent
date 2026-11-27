@@ -1,5 +1,6 @@
 """Minimal terminal entry point with LangGraph human approval."""
 
+from database import check_app_login
 from graph import (
     build_erp_graph,
     configure_outcome_log,
@@ -27,6 +28,11 @@ def _format_cost(action: dict) -> str:
 
 
 def main() -> None:
+    try:
+        check_app_login()
+    except RuntimeError as error:
+        print(f"Error: {error}")
+        return
     configure_outcome_log()
     question = input("Question: ").strip()
     if not question:

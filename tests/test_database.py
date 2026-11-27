@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pytest
 from dotenv import load_dotenv
-from sqlalchemy import func, inspect, select
+from sqlalchemy import func, inspect, select, text
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session, selectinload
 
 
@@ -21,9 +22,9 @@ if not os.getenv("DATABASE_URL"):
         allow_module_level=True,
     )
 
-from database import check_database_connection
-from database import engine
+from database import check_app_login, check_database_connection, engine
 from models import Customer, Invoice, Order, OrderItem, Product, PurchaseOrder
+from seed import create_admin_engine, grant_logins
 
 
 ERP_TABLES = {
@@ -100,3 +101,39 @@ def test_relationships_work() -> None:
         assert purchase_order is not None
         assert purchase_order.product is not None
         assert purchase_order in purchase_order.product.purchase_orders
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "CREATE TABLE app_login_probe (id int)",
+        "DROP TABLE order_items",
+        "ALTER TABLE products ADD COLUMN probe int",
+        "DELETE FROM orders",
+        "UPDATE products SET price = 0",
+        "UPDATE orders SET total_amount = 0",
+        "INSERT INTO customers (name, company, email) VALUES ('x', 'x', 'x')",
+        "SELECT rolname FROM pg_authid",
+        "SELECT pg_read_file('/etc/hosts')",
+    ],
+)
+def test_app_login_cannot_go_beyond_the_business_actions(statement: str) -> None:
+    with engine.connect() as connection:
+        with pytest.raises(ProgrammingError, match="permission denied|must be owner"):
+            connection.execute(text(statement))
+        connection.rollback()
+
+
+def test_the_app_refuses_to_run_as_an_admin_login() -> None:
+    check_app_login()
+    with pytest.raises(RuntimeError, match="admin rights"):
+        check_app_login(create_admin_engine())
+
+
+def test_seed_refuses_logins_that_share_a_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    import seed
+
+    monkeypatch.setattr(seed, "DATABASE_URL", seed.READONLY_DATABASE_URL)
+    with create_admin_engine().connect() as connection:
+        with pytest.raises(RuntimeError, match="different login"):
+            grant_logins(connection)
