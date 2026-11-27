@@ -9,6 +9,7 @@ from langchain_core.messages import HumanMessage
 
 from graph import (
     MAX_SQL_ATTEMPTS,
+    MODEL_RESULT_CHARS,
     OFF_TOPIC_ANSWER,
     AgentState,
     AnswerReview,
@@ -455,3 +456,70 @@ def test_answer_is_kept_when_the_reviewer_is_unavailable() -> None:
 
     assert result["verification"] == "unavailable"
     assert result["answer"] == "LED Desk Lamp"
+
+
+class PromptRecordingLLM:
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+
+    def invoke(self, messages: Any) -> Any:
+        self.prompts.append(messages[-1].content)
+        return AIMessage(content="drafted answer")
+
+
+@pytest.mark.parametrize("fetched_more", [False, True])
+def test_the_model_sees_a_bounded_result_and_is_told_it_was_cut(fetched_more: bool) -> None:
+    nodes = ERPGraphNodes.__new__(ERPGraphNodes)
+    nodes.llm = PromptRecordingLLM()
+    rows = [{"order_id": i, "note": "x" * 40} for i in range(1000)]
+
+    nodes.answer_query(
+        {
+            "messages": [HumanMessage(content="List every order id.")],
+            "generated_sql": "SELECT id AS order_id FROM orders",
+            "sql_result": rows,
+            "sql_truncated": fetched_more,
+        }
+    )
+
+    prompt = nodes.llm.prompts[0]
+    shown = prompt.count('"order_id"')
+    assert 0 < shown < len(rows)
+    assert len(prompt) < MODEL_RESULT_CHARS + 1000
+    assert f"only the first {shown} rows of" in prompt
+    assert ("more than" in prompt) is fetched_more
+
+
+def test_a_small_result_reaches_the_model_whole_with_no_cut_note() -> None:
+    nodes = ERPGraphNodes.__new__(ERPGraphNodes)
+    nodes.llm = PromptRecordingLLM()
+
+    nodes.answer_query(
+        {
+            "messages": [HumanMessage(content="Lowest stock?")],
+            "generated_sql": "SELECT name FROM products",
+            "sql_result": [{"name": "LED Desk Lamp"}],
+            "sql_truncated": False,
+        }
+    )
+
+    assert "only the first" not in nodes.llm.prompts[0]
+
+
+def test_bulk_change_refuses_a_cut_off_selection() -> None:
+    nodes = ERPGraphNodes.__new__(ERPGraphNodes)
+
+    result = nodes.prepare_action(
+        {
+            "messages": [HumanMessage(content="Restock all low-stock products")],
+            "request_type": "query_action",
+            "action_tool": "create_purchase_order",
+            "sql_result": [
+                {"product_id": 1, "stock_quantity": 0, "reorder_threshold": 5}
+            ],
+            "sql_truncated": True,
+        }
+    )
+
+    assert result["pending_actions"] == []
+    assert "Too many records matched" in result["error"]

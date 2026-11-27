@@ -100,7 +100,7 @@ class ReadOnlySQLDatabase(SQLDatabase):
                 "Parameterized commands are not supported by this agent tool."
             )
 
-        rows = execute_readonly_sql(command)
+        rows = execute_readonly_sql(command).rows
         if fetch == "one":
             rows = rows[:1]
         if include_columns:
@@ -152,6 +152,7 @@ def create_groq_model(model: Optional[str] = None) -> ChatGroq:
         api_key=GROQ_API_KEY,
         temperature=0,
         max_retries=2,
+        timeout=60,
     )
 
 

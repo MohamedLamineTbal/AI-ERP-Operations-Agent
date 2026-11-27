@@ -48,7 +48,8 @@ class QueryThenActionNodes:
         return {"generated_sql": state["generated_sql"], "error": None}
 
     def execute_sql(self, state: AgentState) -> dict[str, Any]:
-        return {"sql_result": execute_readonly_sql(state["generated_sql"]), "error": None}
+        result = execute_readonly_sql(state["generated_sql"])
+        return {"sql_result": result.rows, "sql_truncated": result.truncated, "error": None}
 
     def answer_query(self, state: AgentState) -> dict[str, Any]:
         answer = state.get("error") or "query complete"

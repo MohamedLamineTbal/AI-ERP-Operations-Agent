@@ -77,6 +77,7 @@ def _final_answer(values: dict[str, Any]) -> dict[str, Any]:
         "answer": values.get("answer"),
         "verified": values.get("verification") == "passed",
         "rows": rows,
+        "truncated": bool(rows) and bool(values.get("sql_truncated")),
     }
 
 

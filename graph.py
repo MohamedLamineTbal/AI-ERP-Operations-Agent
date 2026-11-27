@@ -31,7 +31,7 @@ from tools.proposal_tools import (
     prepare_action_proposal,
     validate_pending_action,
 )
-from tools.sql_tools import execute_readonly_sql, validate_readonly_sql
+from tools.sql_tools import MAX_RESULT_ROWS, execute_readonly_sql, validate_readonly_sql
 from tools.action_tools import (
     cancel_order,
     create_purchase_order,
@@ -43,6 +43,9 @@ from tools.action_tools import (
 
 MAX_SQL_ATTEMPTS = 3
 MAX_ANSWER_ATTEMPTS = 2
+# The result is sent to the model twice (answer, then check); a small budget keeps one
+# question well inside Groq's per-minute token limit.
+MODEL_RESULT_CHARS = 6000
 OFF_TOPIC_ANSWER = (
     "I can answer questions about your customers, products, orders, invoices, "
     "and purchase orders, and prepare changes for you to approve."
@@ -93,6 +96,7 @@ class AgentState(TypedDict, total=False):
     action_tool: Optional[ActionToolName]
     generated_sql: Optional[str]
     sql_result: Optional[list[dict[str, Any]]]
+    sql_truncated: bool
     pending_actions: list[PendingAction]
     action_costs: list[Optional[ActionCost]]
     error: Optional[str]
@@ -157,6 +161,27 @@ def _extract_sql(value: Any) -> str:
     if text_value.lower().startswith("sqlquery:"):
         text_value = text_value.split(":", 1)[1].strip()
     return text_value
+
+
+def _result_for_model(state: AgentState) -> str:
+    """Serialize the rows that fit in MODEL_RESULT_CHARS, saying when the model sees only part."""
+    rows = state.get("sql_result") or []
+    shown: list[dict[str, Any]] = []
+    size = 2
+    for row in rows:
+        size += len(json.dumps(row, default=str)) + 2
+        if size > MODEL_RESULT_CHARS:
+            break
+        shown.append(row)
+    text = json.dumps(shown, default=str)
+    fetched_more = bool(state.get("sql_truncated"))
+    if len(rows) > len(shown) or fetched_more:
+        total = f"more than {len(rows)}" if fetched_more else str(len(rows))
+        text += (
+            f"\n(This is only the first {len(shown)} rows of {total}. The answer must "
+            "say it covers only part of the result.)"
+        )
+    return text
 
 
 def cost_pending_actions(
@@ -351,10 +376,15 @@ class ERPGraphNodes:
         """Execute checked SQL and capture errors for graph-controlled retries."""
         try:
             result = execute_readonly_sql(state["generated_sql"])
-            return {"sql_result": result, "error": None}
+            return {
+                "sql_result": result.rows,
+                "sql_truncated": result.truncated,
+                "error": None,
+            }
         except Exception as error:
             return {
                 "sql_result": None,
+                "sql_truncated": False,
                 "error": str(error),
                 "retry_count": state.get("retry_count", 0) + 1,
             }
@@ -390,7 +420,7 @@ class ERPGraphNodes:
                             content=(
                                 f"Question: {question}\n"
                                 f"SQL: {state.get('generated_sql')}\n"
-                                f"Result: {json.dumps(state.get('sql_result'), default=str)}"
+                                f"Result: {_result_for_model(state)}"
                                 f"{correction}"
                             )
                         ),
@@ -419,7 +449,7 @@ class ERPGraphNodes:
                         content=(
                             f"Question: {_question_from_state(state)}\n"
                             f"SQL: {state.get('generated_sql')}\n"
-                            f"Result: {json.dumps(state.get('sql_result'), default=str)}\n"
+                            f"Result: {_result_for_model(state)}\n"
                             f"Answer: {state.get('answer')}"
                         )
                     ),
@@ -467,6 +497,11 @@ class ERPGraphNodes:
     def _prepare_query_actions(self, state: AgentState) -> dict[str, Any]:
         """Transform selected database rows into deterministic proposals."""
         action_tool = state.get("action_tool")
+        if state.get("sql_truncated"):
+            raise ValueError(
+                f"Too many records matched (more than {MAX_RESULT_ROWS}). Narrow the "
+                "request, for example by category, amount, or date."
+            )
         rows = state.get("sql_result") or []
         tools = get_action_proposal_tools()
 
@@ -799,6 +834,7 @@ def initial_state(question: str) -> AgentState:
         "messages": [HumanMessage(content=question.strip())],
         "generated_sql": None,
         "sql_result": None,
+        "sql_truncated": False,
         "pending_actions": [],
         "action_costs": [],
         "error": None,
