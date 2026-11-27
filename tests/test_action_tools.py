@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from database import engine
 from models import Invoice, Order, Product, PurchaseOrder
+from seed import create_admin_engine
 from tools.action_tools import (
     BusinessActionError,
     cancel_order,
@@ -16,6 +17,8 @@ from tools.action_tools import (
     mark_invoice_reminder_sent,
     update_order_status,
 )
+
+admin_engine = create_admin_engine()
 
 
 MISSING_ID = 2_000_000_000
@@ -38,7 +41,7 @@ def test_create_purchase_order() -> None:
             assert purchase_order.reason == "Replenish warehouse stock"
             assert purchase_order.unit_cost == product.unit_cost
     finally:
-        with Session(engine) as session, session.begin():
+        with Session(admin_engine) as session, session.begin():
             purchase_order = session.get(PurchaseOrder, result["id"])
             if purchase_order is not None:
                 session.delete(purchase_order)
@@ -75,7 +78,7 @@ def test_cancel_order() -> None:
                 == "Customer requested cancellation"
             )
     finally:
-        with Session(engine) as session, session.begin():
+        with Session(admin_engine) as session, session.begin():
             order = session.get(Order, order_id)
             assert order is not None
             order.status = original_status
@@ -126,7 +129,7 @@ def test_update_order_status() -> None:
             assert updated_order is not None
             assert updated_order.status == "processing"
     finally:
-        with Session(engine) as session, session.begin():
+        with Session(admin_engine) as session, session.begin():
             order = session.get(Order, order_id)
             assert order is not None
             order.status = original_status
@@ -164,7 +167,7 @@ def test_mark_invoice_reminder_sent() -> None:
             assert updated_invoice is not None
             assert updated_invoice.reminder_sent_at is not None
     finally:
-        with Session(engine) as session, session.begin():
+        with Session(admin_engine) as session, session.begin():
             invoice = session.get(Invoice, invoice_id)
             assert invoice is not None
             invoice.reminder_sent_at = original_sent_at

@@ -23,6 +23,7 @@ source says so.
 | [0010](#adr-0010-web-app-served-by-the-api-with-an-access-key-session) | Web app served by the API, with an access-key session | Accepted |
 | [0011](#adr-0011-schema-from-the-models-without-migrations) | Schema from the models, without migrations | Accepted |
 | [0012](#adr-0012-github-flow-with-squash-merged-pull-requests) | GitHub Flow with squash-merged pull requests | Accepted |
+| [0013](#adr-0013-the-running-app-uses-a-login-limited-to-the-business-actions) | The running app uses a login limited to the business actions | Accepted |
 
 ## ADR-0001: Model reads through SQL; writes only through fixed business actions
 
@@ -71,7 +72,8 @@ instead, because the `query_to_xml` bypass showed the denylist could be circumve
 
 - What a query can reach is decided by database permissions, so a validator bug no longer exposes the server.
 - Setup needs a second connection URL and one seed run, a breaking change for existing installs.
-- The running application still connects as a superuser for its own reads and writes (#17).
+- The running application still connected as a superuser for its own reads and writes, until
+  [ADR-0013](#adr-0013-the-running-app-uses-a-login-limited-to-the-business-actions).
 
 ## ADR-0003: Every write waits for explicit human approval
 
@@ -289,3 +291,35 @@ The project owner later confirmed pull requests over direct pushes to `main`.
 - Each change is meant to land on `main` as one reviewable commit.
 - "Required checks" means nothing until CI exists (#27), and `main` is not protected on GitHub, so the policy is followed
   by convention, not enforced. Pull requests #1, #2 and #29 merged as merge commits rather than squashes.
+
+## ADR-0013: The running app uses a login limited to the business actions
+
+**Status:** Accepted. Extends [ADR-0002](#adr-0002-the-database-not-the-validator-is-the-read-only-boundary).
+
+**Context.** After ADR-0002, model-generated SQL ran as `erp_readonly`, but everything else, including the business
+actions, the Records endpoint and purchase-order pricing, ran as `DATABASE_URL`, which in the documented setup was a
+superuser. Only the seed script needs to create tables and roles.
+
+**Decision.** Three logins, each on its own URL, and the seed script refuses if any two share a login:
+
+- `DATABASE_ADMIN_URL`, the schema owner, used only by the seed script.
+- `DATABASE_URL`, `erp_app`, with `SELECT` on the six ERP tables, `INSERT` on `purchase_orders` and its sequence, and
+  `UPDATE` only on the order and invoice columns the actions write.
+- `READONLY_DATABASE_URL`, `erp_readonly`, unchanged.
+
+The web app and the terminal refuse to start if `DATABASE_URL` is a superuser, can create roles or databases, or owns
+the ERP tables.
+
+**Rationale.** From the security audit (#28), issue #17 and its PR (#37): defence in depth. The write path is fixed
+Python and not directly exploitable, but any future bug in it or in a dependency would run with rights to read server
+files, change roles and drop the database. ADR-0002 had shown how quickly "it only runs safe code" stops being true.
+
+**Alternatives considered.** Not recorded beyond the proposal in #17.
+
+**Consequences.**
+
+- A new business action that writes a new table or column, or takes a row lock (`FOR UPDATE` needs `UPDATE` rights),
+  needs a matching grant in the seed script.
+- Creating a purchase order no longer locks the product row; the foreign key keeps the product in place until commit.
+- Setup needs a third URL and a seed run, a breaking change for existing installs.
+- Tests arrange data as the admin login, because the app login cannot delete rows.

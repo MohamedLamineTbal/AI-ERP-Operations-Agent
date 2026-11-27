@@ -14,7 +14,10 @@ from api import QUERY_FAILED, create_app
 from database import engine
 from graph import AgentState, ERPGraphNodes, build_erp_graph
 from models import Product, PurchaseOrder
+from seed import create_admin_engine
 from tools.proposal_tools import PendingAction
+
+admin_engine = create_admin_engine()
 
 
 class QueryNodes:
@@ -175,7 +178,7 @@ def test_change_waits_for_approval_and_is_applied_with_its_cost() -> None:
             assert created is not None
             assert (created.quantity, created.unit_cost) == (3, product.unit_cost)
     finally:
-        with Session(engine) as session, session.begin():
+        with Session(admin_engine) as session, session.begin():
             session.delete(session.get(PurchaseOrder, created_id))
 
 

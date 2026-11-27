@@ -85,9 +85,9 @@ def _create_purchase_order(
     session: Session, action: CreatePurchaseOrderInput
 ) -> dict[str, Any]:
     """Create a purchase order within a caller-managed transaction."""
-    product = session.scalar(
-        select(Product).where(Product.id == action.product_id).with_for_update()
-    )
+    # No row lock: locking needs UPDATE rights on products, which the app login
+    # doesn't have, and the foreign key already keeps the product until commit.
+    product = session.get(Product, action.product_id)
     if product is None:
         raise BusinessActionError(f"Product {action.product_id} does not exist.")
 
