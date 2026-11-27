@@ -27,6 +27,7 @@ from graph import (
     resume_erp_graph,
 )
 from models import Customer, Invoice, Order, Product, PurchaseOrder
+from tools.action_tools import can_cancel, next_order_statuses
 
 
 logger = logging.getLogger("erp_agent")
@@ -113,6 +114,8 @@ def _records(session: Session) -> dict[str, list[dict[str, Any]]]:
                 "id": o.id,
                 "customerId": o.customer_id,
                 "status": o.status,
+                "nextStatuses": next_order_statuses(o.status),
+                "cancellable": can_cancel(o.status),
                 "total": float(o.total_amount),
                 "createdAt": o.created_at.isoformat(),
                 "reason": o.cancellation_reason,

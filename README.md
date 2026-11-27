@@ -38,7 +38,7 @@ Supported actions include:
 
 * Creating purchase orders
 * Cancelling orders
-* Updating order statuses
+* Updating order statuses, one step forward at a time (pending → processing → shipped → completed)
 * Recording invoice reminders
 
 Example:

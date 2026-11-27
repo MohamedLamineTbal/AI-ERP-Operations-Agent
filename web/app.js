@@ -196,7 +196,9 @@
         const inv = o && invoiceForOrder(o.id);
         if (!o) headsUp = `Order ${args[0].order_id} wasn't found, so approving will fail.`;
         else if (o.status === "cancelled") headsUp = `Order ${o.id} is cancelled, so approving will fail.`;
-        else if (cancelling && (o.status === "shipped" || o.status === "completed")) headsUp = `Order ${o.id} is ${o.status}. Shipped and completed orders can't be cancelled, so approving will fail.`;
+        else if (cancelling && !o.cancellable) headsUp = `Order ${o.id} is ${o.status}. Shipped and completed orders can't be cancelled, so approving will fail.`;
+        else if (!cancelling && args[0].new_status === o.status) headsUp = `Order ${o.id} is already ${o.status}, so approving will fail.`;
+        else if (!cancelling && !o.nextStatuses.includes(args[0].new_status)) headsUp = `Order ${o.id} is ${o.status}, and orders only move forward (pending, processing, shipped, completed), so approving will fail.`;
         else if (cancelling && inv && inv.status === "overdue") headsUp = `Invoice #${inv.id} for ${fmt(inv.amount)} is overdue on this order. Cancelling the order doesn't cancel or change the invoice.`;
         else if (cancelling && inv && inv.status === "paid") headsUp = `Invoice #${inv.id} for ${fmt(inv.amount)} is already paid. Cancelling the order doesn't refund it.`;
         else if (cancelling && inv && inv.status === "sent") headsUp = `Invoice #${inv.id} for ${fmt(inv.amount)} has been sent for this order. Cancelling the order doesn't change the invoice.`;
@@ -761,16 +763,17 @@
     const c = customer(o.customerId);
     const inv = invoiceForOrder(o.id);
     const lines = o.items.map((it) => [recLink("products", it.productId, (product(it.productId) || { name: "" }).name), String(it.qty), fmt(it.unitPrice), fmt(round2(it.qty * it.unitPrice))]);
-    let changes = null;
-    if (o.status !== "cancelled") {
+    const boxes = [];
+    if (o.nextStatuses.length) {
       const sel = el("select");
       sel.id = "order-status";
-      ["pending", "processing", "shipped", "completed"].filter((s) => s !== o.status).forEach((s) => sel.appendChild(el("option", null, cap(s))));
+      o.nextStatuses.forEach((s) => sel.appendChild(el("option", null, cap(s))));
       const slabel = el("label", null, "Change status to");
       slabel.htmlFor = "order-status";
-      changes = sectionOf("Changes", actionBox([slabel, sel], "Prepare change", () => `Change order ${o.id} status to ${sel.value.toLowerCase()}.`));
-      if (o.status !== "shipped" && o.status !== "completed") changes.append(actionBox([], "Prepare cancellation", () => `Cancel order ${o.id}.`));
+      boxes.push(actionBox([slabel, sel], "Prepare change", () => `Change order ${o.id} status to ${sel.value.toLowerCase()}.`));
     }
+    if (o.cancellable) boxes.push(actionBox([], "Prepare cancellation", () => `Cancel order ${o.id}.`));
+    const changes = boxes.length ? sectionOf("Changes", ...boxes) : null;
     return [
       "Order", `Order #${o.id}`,
       kv([["Customer", c ? recLink("customers", c.id, c.company) : ""], ["Date", dateIn(-o.daysAgo)], ["Status", statusPill(o.status)], o.reason && ["Cancellation reason", o.reason], ["Invoice", inv ? frag(recLink("invoices", inv.id, "#" + inv.id), document.createTextNode(" "), statusPill(inv.status)) : "Not invoiced"]]),
