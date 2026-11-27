@@ -5,13 +5,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-pip install -r requirements.txt        # deps (use a .venv)
+uv sync                                # Python 3.12 + exact locked deps into .venv; edit pyproject.toml, then `uv lock`, to change them
 cp .env.example .env                   # then set DATABASE_URL, READONLY_DATABASE_URL, GROQ_API_KEY, and ERP_ACCESS_KEY
-python3 seed.py                        # create tables + the erp_readonly login, seed sample data (skips if customers exist)
-uvicorn api:app --reload               # web app at http://127.0.0.1:8000 (Desk + Records)
-python3 main.py                        # interactive terminal: one question per run, y/n approval prompt
-pytest                                 # full suite
-pytest tests/test_graph.py::test_name  # single test
+uv run python seed.py                  # create tables + the erp_readonly login, seed sample data (skips if customers exist)
+uv run uvicorn api:app --reload        # web app at http://127.0.0.1:8000 (Desk + Records)
+uv run python main.py                  # interactive terminal: one question per run, y/n approval prompt
+uv run pytest                          # full suite
+uv run pytest tests/test_graph.py::test_name  # single test
 ```
 
 There is no lint/format configuration in the repo.
@@ -20,7 +20,7 @@ Testing notes:
 - `config.py` raises at import time if `DATABASE_URL` or `READONLY_DATABASE_URL` is unset, so almost every module (and test) needs a `.env`.
 - `test_database.py`, `test_action_tools.py`, `test_agent.py`, `test_graph_approval.py`, and `test_multi_step_actions.py` hit a real, seeded PostgreSQL database. Action tests write rows and clean up in `finally` blocks.
 - Graph tests avoid Groq by injecting fake node classes into `build_erp_graph(nodes=...)` or fake LLMs into `ERPGraphNodes(llm=...)`. Follow that pattern rather than calling the real model.
-- `test_tracing_config.py` asserts exact values in `.env.example` and `requirements.txt` (LangSmith tracing off by default, `langsmith>=0.4,<1.0`). Update it if you change either file.
+- `test_tracing_config.py` asserts that `.env.example` keeps LangSmith tracing off by default. Update it if you change that file.
 
 ## Architecture
 

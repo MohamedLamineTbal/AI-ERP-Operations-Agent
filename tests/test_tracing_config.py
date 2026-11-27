@@ -15,8 +15,3 @@ def test_example_environment_keeps_langsmith_tracing_opt_in() -> None:
     assert values["LANGSMITH_API_KEY"] == ""
     assert values["LANGSMITH_PROJECT"] == "erp-ai-agent"
 
-
-def test_langsmith_sdk_is_declared_for_observability() -> None:
-    requirements = (PROJECT_ROOT / "requirements.txt").read_text()
-
-    assert "langsmith>=0.4,<1.0" in requirements.splitlines()
