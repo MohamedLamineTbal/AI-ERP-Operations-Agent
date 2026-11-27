@@ -32,7 +32,7 @@ def test_list_tables_and_get_schema() -> None:
 def test_valid_select_query() -> None:
     assert validate_readonly_sql("SELECT id, name FROM customers LIMIT 3") is True
 
-    rows = execute_readonly_sql("SELECT id, name FROM customers ORDER BY id LIMIT 3")
+    rows = execute_readonly_sql("SELECT id, name FROM customers ORDER BY id LIMIT 3").rows
     assert len(rows) == 3
     assert set(rows[0]) == {"id", "name"}
 
@@ -45,7 +45,7 @@ def test_filtering_query() -> None:
         WHERE stock_quantity < reorder_threshold
         ORDER BY id
         """
-    )
+    ).rows
     assert rows
     assert all(
         row["stock_quantity"] < row["reorder_threshold"] for row in rows
@@ -61,7 +61,7 @@ def test_join_query() -> None:
         ORDER BY o.id
         LIMIT 5
         """
-    )
+    ).rows
     assert len(rows) == 5
     assert all(row["order_id"] and row["customer_name"] for row in rows)
 
@@ -80,7 +80,7 @@ def test_multi_table_query() -> None:
         ORDER BY o.id, oi.id
         LIMIT 10
         """
-    )
+    ).rows
     assert len(rows) == 10
     assert set(rows[0]) == {"customer_name", "order_id", "sku", "quantity"}
     assert all(row["quantity"] > 0 for row in rows)
@@ -94,7 +94,7 @@ def test_aggregation_query() -> None:
         GROUP BY status
         ORDER BY status
         """
-    )
+    ).rows
     assert rows
     assert sum(row["order_count"] for row in rows) == 60
     assert all(row["revenue"] >= 0 for row in rows)
@@ -118,7 +118,7 @@ def test_state_changing_sql_is_rejected(query: str, keyword: str) -> None:
 def test_keywords_inside_values_and_comments_are_allowed() -> None:
     rows = execute_readonly_sql(
         "SELECT 'DELETE is text' AS message /* DROP is a comment */"
-    )
+    ).rows
     assert rows == [{"message": "DELETE is text"}]
 
 
@@ -153,3 +153,13 @@ def test_malformed_sql_is_reported() -> None:
 def test_readonly_sql_cannot_reach_beyond_the_erp_tables(query: str) -> None:
     with pytest.raises(ReadOnlySQLExecutionError, match="permission denied"):
         execute_readonly_sql(query)
+
+
+@pytest.mark.parametrize("matching, truncated", [(10, False), (11, True), (50, True)])
+def test_results_stop_at_the_row_cap(matching: int, truncated: bool) -> None:
+    result = execute_readonly_sql(
+        f"SELECT g FROM generate_series(1, {matching}) g ORDER BY g", max_rows=10
+    )
+
+    assert result.rows == [{"g": i} for i in range(1, min(matching, 10) + 1)]
+    assert result.truncated is truncated

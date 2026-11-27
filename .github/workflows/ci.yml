@@ -32,8 +32,10 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     # Throwaway values for a disposable database. No test calls the real model.
+    # The test setup creates erp_ai_test and both app logins through TEST_DATABASE_URL.
     env:
-      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/erp_ai
+      DATABASE_ADMIN_URL: postgresql+psycopg://postgres:postgres@localhost:5432/erp_ai
+      DATABASE_URL: postgresql+psycopg://erp_app:ci-app@localhost:5432/erp_ai
       READONLY_DATABASE_URL: postgresql+psycopg://erp_readonly:ci-readonly@localhost:5432/erp_ai
       TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/erp_ai_test
       GROQ_API_KEY: not-used-by-tests
@@ -41,26 +43,21 @@ jobs:
       LANGSMITH_TRACING: "false"
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.9"
-          cache: pip
-      - run: pip install -r requirements.txt
-      - name: Create tables and the read-only login
-        run: python seed.py
-      - run: python -m pytest -q
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run pytest -q
 
   audit:
     name: Dependency audit
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # Reports without blocking: the fixes need the upgrade tracked in #19. Make it blocking once that lands.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.9"
-          cache: pip
-      - run: pip install -r requirements.txt pip-audit
-      - run: pip-audit --progress-spinner off
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv export --locked --format requirements-txt --no-hashes --no-emit-project > "$RUNNER_TEMP/requirements.txt"
+      - run: uv run pip-audit -r "$RUNNER_TEMP/requirements.txt" --no-deps --disable-pip --progress-spinner off

@@ -16,7 +16,10 @@ from graph import (
     run_erp_graph,
 )
 from models import Order, PurchaseOrder
+from seed import create_admin_engine
 from tools.proposal_tools import PendingAction, validate_pending_action
+
+admin_engine = create_admin_engine()
 
 
 class ApprovalNodes:
@@ -127,7 +130,7 @@ def test_cancellation_approved() -> None:
         assert result["approval_status"] == "approved"
         assert "approved and executed" in result["answer"]
     finally:
-        with Session(engine) as session, session.begin():
+        with Session(admin_engine) as session, session.begin():
             order = session.get(Order, order_id)
             assert order is not None
             order.status = original_status
@@ -179,7 +182,7 @@ def test_purchase_order_approved() -> None:
             assert created.reason == "Inventory below threshold"
         assert nodes.execute_calls == 1
     finally:
-        with Session(engine) as session, session.begin():
+        with Session(admin_engine) as session, session.begin():
             created = session.get(PurchaseOrder, created_id)
             if created is not None:
                 session.delete(created)
@@ -240,7 +243,7 @@ def test_approved_batch_rolls_back_all_actions_if_one_fails() -> None:
         assert after_ids == before_ids
         assert "Action execution failed" in result["answer"]
     finally:
-        with Session(engine) as session, session.begin():
+        with Session(admin_engine) as session, session.begin():
             for purchase_order in session.scalars(
                 select(PurchaseOrder).where(PurchaseOrder.id.not_in(before_ids))
             ):

@@ -14,7 +14,10 @@ from api import QUERY_FAILED, create_app
 from database import engine
 from graph import AgentState, ERPGraphNodes, build_erp_graph
 from models import Product, PurchaseOrder
+from seed import create_admin_engine
 from tools.proposal_tools import PendingAction
+
+admin_engine = create_admin_engine()
 
 
 class QueryNodes:
@@ -134,7 +137,19 @@ def test_question_streams_progress_then_a_checked_answer() -> None:
         "answer": "The LED Desk Lamp.",
         "verified": True,
         "rows": [{"name": "LED Desk Lamp"}],
+        "truncated": False,
     }
+
+
+class TruncatedQueryNodes(QueryNodes):
+    def execute_sql(self, state: AgentState) -> dict[str, Any]:
+        return {"sql_result": [{"name": "LED Desk Lamp"}], "sql_truncated": True, "error": None}
+
+
+def test_a_cut_off_result_is_flagged_to_the_browser() -> None:
+    events = _events(_client(TruncatedQueryNodes()).post("/api/ask", json={"question": "All?"}))
+
+    assert events[-1]["truncated"] is True
 
 
 def test_failed_question_does_not_expose_internal_errors() -> None:
@@ -175,7 +190,7 @@ def test_change_waits_for_approval_and_is_applied_with_its_cost() -> None:
             assert created is not None
             assert (created.quantity, created.unit_cost) == (3, product.unit_cost)
     finally:
-        with Session(engine) as session, session.begin():
+        with Session(admin_engine) as session, session.begin():
             session.delete(session.get(PurchaseOrder, created_id))
 
 

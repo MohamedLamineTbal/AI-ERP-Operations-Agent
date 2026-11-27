@@ -7,7 +7,7 @@ from typing import Any, Optional, Union
 # Load .env before LangChain initializes its environment-driven tracers.
 from config import GROQ_API_KEY, GROQ_MODEL
 
-from langchain.agents import AgentExecutor
+from langchain_classic.agents import AgentExecutor
 from langchain_community.agent_toolkits import SQLDatabaseToolkit, create_sql_agent
 from langchain_community.utilities import SQLDatabase
 from langchain_groq import ChatGroq
@@ -100,7 +100,7 @@ class ReadOnlySQLDatabase(SQLDatabase):
                 "Parameterized commands are not supported by this agent tool."
             )
 
-        rows = execute_readonly_sql(command)
+        rows = execute_readonly_sql(command).rows
         if fetch == "one":
             rows = rows[:1]
         if include_columns:
@@ -135,7 +135,9 @@ def create_readonly_database() -> ReadOnlySQLDatabase:
         readonly_engine,
         schema="public",
         include_tables=ERP_TABLES,
-        sample_rows_in_table_info=2,
+        # No sample rows: they send customer records to the model on every question,
+        # and the schema's CHECK constraints already list every allowed status.
+        sample_rows_in_table_info=0,
     )
 
 
@@ -150,6 +152,7 @@ def create_groq_model(model: Optional[str] = None) -> ChatGroq:
         api_key=GROQ_API_KEY,
         temperature=0,
         max_retries=2,
+        timeout=60,
     )
 
 

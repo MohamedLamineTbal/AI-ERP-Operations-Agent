@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from config import ACCESS_KEY, BASE_DIR
-from database import engine
+from database import check_app_login, engine
 from graph import (
     build_erp_graph,
     configure_outcome_log,
@@ -77,6 +77,7 @@ def _final_answer(values: dict[str, Any]) -> dict[str, Any]:
         "answer": values.get("answer"),
         "verified": values.get("verification") == "passed",
         "rows": rows,
+        "truncated": bool(rows) and bool(values.get("sql_truncated")),
     }
 
 
@@ -164,12 +165,14 @@ def create_app(
     Every /api route needs a session cookie, opened by posting the access key
     to /api/session. Requests for any host other than allowed_hosts are
     refused, so a page that rebinds its domain to this machine cannot reach it.
+    Refuses to start when DATABASE_URL is an admin login.
     """
     key = ACCESS_KEY if access_key is None else access_key
     if not key:
         raise RuntimeError(
             "ERP_ACCESS_KEY is not set. Add a long random access key to .env."
         )
+    check_app_login()
     session_token = hashlib.sha256(f"erp-session:{key}".encode()).hexdigest()
 
     def require_session(erp_session: Optional[str] = Cookie(None)) -> None:

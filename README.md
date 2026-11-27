@@ -112,6 +112,8 @@ REVOKE
 
 The database enforces this too. Model-generated SQL runs as a separate login, `erp_readonly`, that can only `SELECT` from the six ERP tables. It has no superuser rights, so it cannot read server files, other tables, or database settings, even if a query gets past the keyword checks.
 
+The rest of the app runs as `erp_app`, which can read the ERP tables and make only the writes the business tools make: add purchase orders, change an order's status, and record invoice reminders. It cannot delete rows, change the schema, or manage logins, and the app refuses to start if its login could.
+
 Database modifications must instead go through explicitly defined and validated business tools.
 
 For example:
@@ -129,6 +131,17 @@ WHERE id = 4;
 ```
 
 This separates AI-generated data retrieval from controlled application-side mutations.
+
+### Data sent to third parties
+
+Each question sends the following to Groq:
+
+* the question itself;
+* the database schema: tables, columns and constraints, with no table rows;
+* the rows the generated query returns, once to write the answer and once to check it.
+
+With LangSmith tracing enabled, every prompt and response, including those rows, is also stored in LangSmith. Keep
+tracing off when the database holds real customer data.
 
 ---
 
@@ -332,7 +345,8 @@ erp-ai-agent/
 │
 ├── .env.example
 ├── .gitignore
-├── requirements.txt
+├── pyproject.toml
+├── uv.lock
 └── README.md
 ```
 
@@ -346,29 +360,17 @@ git clone <YOUR_REPOSITORY_URL>
 cd erp-ai-agent
 ```
 
-### 2. Create a virtual environment
+### 2. Install the dependencies
+
+The project needs Python 3.12 or later and uses [uv](https://docs.astral.sh/uv/) to install exact, locked versions. Install uv, then run:
 
 ```bash
-python3 -m venv .venv
+uv sync
 ```
 
-Activate it on macOS/Linux:
+This creates `.venv` with the Python version in `.python-version` (uv downloads it if needed) and installs the versions pinned in `uv.lock`. Run the project's commands with `uv run`, or activate `.venv` first.
 
-```bash
-source .venv/bin/activate
-```
-
-On Windows:
-
-```bash
-.venv\Scripts\activate
-```
-
-### 3. Install dependencies
-
-```bash
-pip install -r requirements.txt
-```
+To change a dependency, edit `pyproject.toml` and run `uv lock`.
 
 
 
@@ -389,18 +391,23 @@ cp .env.example .env
 Configure your PostgreSQL connection:
 
 ```env
-DATABASE_URL=postgresql+psycopg://USERNAME:PASSWORD@localhost:5432/erp_ai
-READONLY_DATABASE_URL=postgresql+psycopg://erp_readonly:A_LONG_RANDOM_PASSWORD@localhost:5432/erp_ai
+DATABASE_ADMIN_URL=postgresql+psycopg://USERNAME:PASSWORD@localhost:5432/erp_ai
+DATABASE_URL=postgresql+psycopg://erp_app:A_LONG_RANDOM_PASSWORD@localhost:5432/erp_ai
+READONLY_DATABASE_URL=postgresql+psycopg://erp_readonly:ANOTHER_LONG_RANDOM_PASSWORD@localhost:5432/erp_ai
 ```
 
-`DATABASE_URL` needs a login that can create tables and roles. `READONLY_DATABASE_URL` names the read-only login that model-generated SQL runs as. It must be a different login; the seed script creates it with that name and password.
+The app uses three logins, and each must be different:
+
+- `DATABASE_ADMIN_URL` is a login that can create tables and roles, such as `postgres`. Only the seed script uses it.
+- `DATABASE_URL` is the login the app runs as. The seed script creates `erp_app` with this name and password, with only the rights the business tools need.
+- `READONLY_DATABASE_URL` is the login model-generated SQL runs as. The seed script creates it with this name and password, with `SELECT` on the ERP tables only.
 
 Then initialize/seed the database using the project's seed script.
 
 For example:
 
 ```bash
-python3 seed.py
+uv run python seed.py
 ```
 
 
@@ -423,8 +430,9 @@ GROQ_MODEL=openai/gpt-oss-120b
 Example `.env.example`:
 
 ```env
-DATABASE_URL=postgresql+psycopg://USERNAME:PASSWORD@localhost:5432/erp_ai
-READONLY_DATABASE_URL=postgresql+psycopg://erp_readonly:A_LONG_RANDOM_PASSWORD@localhost:5432/erp_ai
+DATABASE_ADMIN_URL=postgresql+psycopg://USERNAME:PASSWORD@localhost:5432/erp_ai
+DATABASE_URL=postgresql+psycopg://erp_app:A_LONG_RANDOM_PASSWORD@localhost:5432/erp_ai
+READONLY_DATABASE_URL=postgresql+psycopg://erp_readonly:ANOTHER_LONG_RANDOM_PASSWORD@localhost:5432/erp_ai
 
 GROQ_API_KEY=your_groq_api_key_here
 GROQ_MODEL=openai/gpt-oss-120b
@@ -446,7 +454,7 @@ LangSmith configuration is optional.
 Start the server:
 
 ```bash
-uvicorn api:app --reload
+uv run uvicorn api:app --reload
 ```
 
 Then open http://127.0.0.1:8000 and enter the `ERP_ACCESS_KEY` from `.env` once; the browser keeps a session cookie after that. The server only answers requests addressed to `127.0.0.1` or `localhost`. The **Desk** is where you ask questions and approve or reject changes. **Records** lets you browse customers, products, orders, invoices, and purchase orders, and prepare changes from any record. Every change still waits for your approval.
@@ -456,7 +464,7 @@ Then open http://127.0.0.1:8000 and enter the `ERP_ACCESS_KEY` from `.env` once;
 Start the terminal application:
 
 ```bash
-python3 main.py
+uv run python main.py
 ```
 
 Then ask a question:
@@ -531,11 +539,27 @@ These requests were prevented from performing unauthorized database mutations.
 
 ## Testing
 
+The tests run against a separate database, never the one in `DATABASE_URL`. Add its URL to `.env` (the suite creates
+it if it doesn't exist):
+
+```env
+TEST_DATABASE_URL=postgresql+psycopg://USERNAME:PASSWORD@localhost:5432/erp_ai_test
+```
+
 Run the automated test suite with:
 
 ```bash
-pytest
+uv run pytest
 ```
+
+Check the locked dependencies for known vulnerabilities with:
+
+```bash
+uv export --format requirements-txt --no-hashes --no-emit-project > /tmp/requirements.txt
+uv run pip-audit -r /tmp/requirements.txt --no-deps --disable-pip
+```
+
+Each run rebuilds the test database from the seed data, and any test that writes is followed by a fresh seed.
 
 The system has also been manually tested end-to-end against PostgreSQL.
 

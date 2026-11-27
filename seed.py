@@ -1,15 +1,15 @@
-"""Create the ERP tables, the read-only login, and fill an empty database with sample data."""
+"""Create the ERP tables and the app's two logins, and fill an empty database with sample data."""
 
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from random import Random
 
-from sqlalchemy import func, make_url, select, text
+from sqlalchemy import create_engine, func, make_url, select, text
+from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from config import DATABASE_URL, READONLY_DATABASE_URL
-from database import engine
+from config import DATABASE_ADMIN_URL, DATABASE_URL, READONLY_DATABASE_URL
 from models import (
     Base,
     Customer,
@@ -82,56 +82,98 @@ PRODUCTS = [
 ]
 
 
-def grant_readonly_access() -> None:
-    """Create or update the login model-generated SQL runs as.
-
-    It can connect and SELECT from the ERP tables, and nothing else: no
-    superuser rights, so no server files, no other tables, and no writes.
-    """
-    readonly = make_url(READONLY_DATABASE_URL)
-    if readonly.username == make_url(DATABASE_URL).username:
+def create_admin_engine() -> Engine:
+    """Return an engine for the login that owns the schema and creates roles."""
+    if not DATABASE_ADMIN_URL:
         raise RuntimeError(
-            "READONLY_DATABASE_URL must use a different login than DATABASE_URL."
+            "DATABASE_ADMIN_URL is not set. Add the URL of a login that can "
+            "create tables and roles to .env; only seed.py uses it."
         )
-    tables = [table.name for table in Base.metadata.sorted_tables]
+    return create_engine(DATABASE_ADMIN_URL)
 
-    role, password, database = readonly.username, readonly.password, readonly.database
-    with engine.begin() as connection:
-        exists = connection.scalar(
-            text("SELECT 1 FROM pg_roles WHERE rolname = :role"), {"role": role}
+
+def _run_quoted(connection: Connection, statements: list[tuple[str, list[str]]]) -> None:
+    """Run each (format template, arguments) pair, quoted by PostgreSQL's format()."""
+    for template, arguments in statements:
+        names = [f"a{i}" for i in range(len(arguments))]
+        casts = ", ".join(f"CAST(:{name} AS text)" for name in names)
+        try:
+            quoted = connection.scalar(
+                text(f"SELECT format(CAST(:template AS text), {casts})"),
+                {"template": template, **dict(zip(names, arguments))},
+            )
+            connection.exec_driver_sql(quoted)
+        except SQLAlchemyError as error:
+            # Re-raise without the statement, which may hold a password.
+            raise RuntimeError(
+                f"Could not set up the database logins: {type(error.orig).__name__}"
+            ) from None
+
+
+def _reset_login(connection: Connection, url: str) -> list[tuple[str, list[str]]]:
+    """Statements that create or update a login with no rights of its own."""
+    login = make_url(url)
+    role = login.username
+    exists = connection.scalar(
+        text("SELECT 1 FROM pg_roles WHERE rolname = :role"), {"role": role}
+    )
+    verb = "ALTER" if exists else "CREATE"
+    return [
+        (
+            f"{verb} ROLE %I LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
+            "NOINHERIT NOREPLICATION NOBYPASSRLS PASSWORD %L",
+            [role, login.password],
+        ),
+        ("REVOKE ALL ON ALL TABLES IN SCHEMA public FROM %I", [role]),
+        ("REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM %I", [role]),
+        ("GRANT CONNECT ON DATABASE %I TO %I", [login.database, role]),
+        ("GRANT USAGE ON SCHEMA public TO %I", [role]),
+    ]
+
+
+def grant_logins(connection: Connection) -> None:
+    """Create or update the two logins the running app uses.
+
+    The read-only login may only SELECT the ERP tables. The app login may also
+    make exactly the writes the business actions make, and nothing else: no
+    deletes, no schema changes, no roles.
+    """
+    usernames = [
+        make_url(url).username
+        for url in (DATABASE_ADMIN_URL, DATABASE_URL, READONLY_DATABASE_URL)
+    ]
+    if len(set(usernames)) != len(usernames):
+        raise RuntimeError(
+            "DATABASE_ADMIN_URL, DATABASE_URL and READONLY_DATABASE_URL must "
+            "each use a different login."
         )
-        verb = "ALTER" if exists else "CREATE"
-        statements = [
-            (
-                f"{verb} ROLE %I LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
-                "NOINHERIT NOREPLICATION NOBYPASSRLS PASSWORD %L",
-                [role, password],
-            ),
-            ("REVOKE ALL ON ALL TABLES IN SCHEMA public FROM %I", [role]),
-            ("GRANT CONNECT ON DATABASE %I TO %I", [database, role]),
-            ("GRANT USAGE ON SCHEMA public TO %I", [role]),
-            *[("GRANT SELECT ON %I TO %I", [table, role]) for table in tables],
-        ]
-        for template, arguments in statements:
-            names = [f"a{i}" for i in range(len(arguments))]
-            casts = ", ".join(f"CAST(:{name} AS text)" for name in names)
-            try:
-                quoted = connection.scalar(
-                    text(f"SELECT format(CAST(:template AS text), {casts})"),
-                    {"template": template, **dict(zip(names, arguments))},
-                )
-                connection.exec_driver_sql(quoted)
-            except SQLAlchemyError as error:
-                # Re-raise without the statement, which holds the password.
-                raise RuntimeError(
-                    f"Could not set up the read-only login: {type(error.orig).__name__}"
-                ) from None
+    _, app, readonly = usernames
+    tables = [table.name for table in Base.metadata.sorted_tables]
+    sequence = connection.scalar(
+        text("SELECT pg_get_serial_sequence('purchase_orders', 'id')")
+    )
+
+    _run_quoted(
+        connection,
+        [
+            *_reset_login(connection, READONLY_DATABASE_URL),
+            *[("GRANT SELECT ON %I TO %I", [table, readonly]) for table in tables],
+            *_reset_login(connection, DATABASE_URL),
+            *[("GRANT SELECT ON %I TO %I", [table, app]) for table in tables],
+            ("GRANT INSERT ON purchase_orders TO %I", [app]),
+            ("GRANT USAGE ON SEQUENCE %s TO %I", [sequence, app]),
+            ("GRANT UPDATE (status, cancellation_reason) ON orders TO %I", [app]),
+            ("GRANT UPDATE (reminder_sent_at) ON invoices TO %I", [app]),
+        ],
+    )
 
 
 def seed_database() -> None:
-    """Create the schema and seed it once when the ERP tables are empty."""
+    """Create the schema and logins, and seed once when the ERP tables are empty."""
+    engine = create_admin_engine()
     Base.metadata.create_all(engine)
-    grant_readonly_access()
+    with engine.begin() as connection:
+        grant_logins(connection)
 
     with Session(engine) as session:
         existing_customers = session.scalar(select(func.count(Customer.id))) or 0
