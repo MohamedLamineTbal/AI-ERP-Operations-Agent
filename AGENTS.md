@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 uv sync                                # Python 3.12 + exact locked deps into .venv; edit pyproject.toml, then `uv lock`, to change them
-cp .env.example .env                   # then set DATABASE_URL, READONLY_DATABASE_URL, GROQ_API_KEY, and ERP_ACCESS_KEY
-uv run python seed.py                  # create tables + the erp_readonly login, seed sample data (skips if customers exist)
+cp .env.example .env                   # then set DATABASE_ADMIN_URL, DATABASE_URL, READONLY_DATABASE_URL, TEST_DATABASE_URL, GROQ_API_KEY, and ERP_ACCESS_KEY
+uv run python seed.py                  # as the admin login: create tables + the erp_app and erp_readonly logins, seed sample data (skips if customers exist)
 uv run uvicorn api:app --reload        # web app at http://127.0.0.1:8000 (Desk + Records)
 uv run python main.py                  # interactive terminal: one question per run, y/n approval prompt
 uv run pytest                          # full suite
@@ -18,7 +18,8 @@ There is no lint/format configuration in the repo.
 
 Testing notes:
 - `config.py` raises at import time if `DATABASE_URL` or `READONLY_DATABASE_URL` is unset, so almost every module (and test) needs a `.env`.
-- `test_database.py`, `test_action_tools.py`, `test_agent.py`, `test_graph_approval.py`, and `test_multi_step_actions.py` hit a real, seeded PostgreSQL database. Action tests write rows and clean up in `finally` blocks.
+- Tests never touch the development database. `tests/conftest.py` repoints the URLs before anything imports `config`: `TEST_DATABASE_URL` (a login that can create tables and roles) becomes `DATABASE_ADMIN_URL`, and `DATABASE_URL` and `READONLY_DATABASE_URL` keep their logins but use the test database. It refuses to run if that is the development database, rebuilds it from the seed at the start of each run, and reseeds after any test that committed a write. So database tests can rely on fresh seed data, and don't need cleanup to protect real data. Any module that loads `config` at import time must keep working under that override.
+- The app login can't delete rows or update most columns, so tests arrange data through `admin_engine` (`seed.create_admin_engine()`), and run the code under test on the app's own engines.
 - Graph tests avoid Groq by injecting fake node classes into `build_erp_graph(nodes=...)` or fake LLMs into `ERPGraphNodes(llm=...)`. Follow that pattern rather than calling the real model.
 - `test_tracing_config.py` asserts that `.env.example` keeps LangSmith tracing off by default. Update it if you change that file.
 
@@ -26,7 +27,7 @@ Testing notes:
 
 A natural-language ERP assistant over PostgreSQL. Reads go through LLM-generated, read-only SQL. Writes go only through fixed Python business tools, and only after a human approves them.
 
-**Entry paths:** `main.py` (terminal) and `api.py` (FastAPI, serves `web/`) both drive `graph.py` (`build_erp_graph`, `initial_state`, `run_erp_graph`, `resume_erp_graph`). Every `/api` route needs the `erp_session` cookie, set by `POST /api/session` with `ERP_ACCESS_KEY`; `create_app` refuses to start without a key, and `TrustedHostMiddleware` only accepts `127.0.0.1`/`localhost`. API tests open a session through `_client` in `tests/test_api.py`. `POST /api/ask` streams NDJSON events: one `step` per graph node (`STEP_LABELS`), then an `answer` or an `approval`. Pending approvals live in memory in `create_app` and are resumed by `POST /api/approvals/{id}`; they are lost when the server restarts. The API never returns internal error text to the browser; details go to the `erp_agent` log. `GET /api/records` returns every table for the Records pages, and `web/app.js` derives summaries, filters, and detail panels from it. The LangGraph `StateGraph` uses an `InMemorySaver` checkpointer. `request_approval` calls `interrupt()`, the caller reads the payload with `get_interrupt_payload`, then resumes on the same `thread_id` with `Command(resume="approved"|"rejected")`.
+**Entry paths:** `main.py` (terminal) and `api.py` (FastAPI, serves `web/`) both drive `graph.py` (`build_erp_graph`, `initial_state`, `run_erp_graph`, `resume_erp_graph`). Both call `check_app_login` at startup and refuse a `DATABASE_URL` login that is a superuser, can create roles or databases, or owns the ERP tables. Every `/api` route needs the `erp_session` cookie, set by `POST /api/session` with `ERP_ACCESS_KEY`; `create_app` refuses to start without a key, and `TrustedHostMiddleware` only accepts `127.0.0.1`/`localhost`. API tests open a session through `_client` in `tests/test_api.py`. `POST /api/ask` streams NDJSON events: one `step` per graph node (`STEP_LABELS`), then an `answer` or an `approval`. Pending approvals live in memory in `create_app` and are resumed by `POST /api/approvals/{id}`; they are lost when the server restarts. The API never returns internal error text to the browser; details go to the `erp_agent` log. `GET /api/records` returns every table for the Records pages, and `web/app.js` derives summaries, filters, and detail panels from it. The LangGraph `StateGraph` uses an `InMemorySaver` checkpointer. `request_approval` calls `interrupt()`, the caller reads the payload with `get_interrupt_payload`, then resumes on the same `thread_id` with `Command(resume="approved"|"rejected")`.
 
 **Graph flow (`graph.py`):**
 - `understand_request` sorts each request into one of four kinds: `query`, `action` (one directly identified record), `query_action` (select matching rows first, then act on every match), or `other` (greetings and off-topic requests, which get the fixed `OFF_TOPIC_ANSWER` and go straight to `record_outcome`). `_infer_query_action` checks with regex before the LLM classifier runs ("restock all low-stock products", "remind all overdue invoices"). Only `create_purchase_order` and `mark_invoice_reminder_sent` support `query_action`.
@@ -38,10 +39,10 @@ A natural-language ERP assistant over PostgreSQL. Reads go through LLM-generated
 
 **Three tool layers in `tools/` (keep them separate):**
 - `sql_tools.py` is the read-only boundary. A custom tokenizer ignores comments and string literals, then rejects forbidden keywords and side-effecting functions (`FORBIDDEN_KEYWORDS`, `FORBIDDEN_FUNCTIONS`). Execution runs on `readonly_engine` (`READONLY_DATABASE_URL`), a login `seed.py` creates with `SELECT` on the six ERP tables and nothing else, inside `SET TRANSACTION READ ONLY` with a 5s `statement_timeout`, and the transaction always rolls back. That login is the real boundary; the tokenizer is a first filter. Never point it at a superuser or the `DATABASE_URL` login. All model-generated SQL must go through `validate_readonly_sql` / `execute_readonly_sql`.
-- `action_tools.py` holds the real mutating functions (ORM-based, Pydantic `*Input` models with `extra="forbid"`, `BusinessActionError` for rule violations). They accept an optional `_session` so the graph can batch them. They are never exposed to the LLM directly.
+- `action_tools.py` holds the real mutating functions. They run as `erp_app` (`DATABASE_URL`), which `seed.py` grants `SELECT` on the six tables, `INSERT` on `purchase_orders`, and `UPDATE` only on `orders(status, cancellation_reason)` and `invoices(reminder_sent_at)`. A new write, or a row lock (`FOR UPDATE` needs `UPDATE` on the table), needs a matching grant in `grant_logins`. They are ORM-based, with Pydantic `*Input` models (`extra="forbid"`) and `BusinessActionError` for rule violations. They accept an optional `_session` so the graph can batch them. They are never exposed to the LLM directly.
 - `proposal_tools.py` holds the LLM-facing tools with the same names (`create_purchase_order`, `cancel_order`, ...). They only return a `PendingAction` JSON describing `what_will_change`. `prepare_action_proposal` binds them to the LLM, and a regex-based `_fallback_action_proposal` covers cases where the model doesn't call a tool.
 
-Adding a new business action means updating all of: an `*Input` model and function in `action_tools.py`, a proposal tool in `proposal_tools.py`, the `ActionToolName` literal, and `_execute_business_action` in `graph.py`. If the action supports set-based use, also update `_infer_query_action`, the `generate_sql` selection requirements, and `_prepare_query_actions`.
+Adding a new business action means updating all of: an `*Input` model and function in `action_tools.py`, any new grant it needs in `seed.py`, a proposal tool in `proposal_tools.py`, the `ActionToolName` literal, and `_execute_business_action` in `graph.py`. If the action supports set-based use, also update `_infer_query_action`, the `generate_sql` selection requirements, and `_prepare_query_actions`.
 
 **`agent.py`** contains an older LangChain `create_sql_agent` (`ask_erp`). It is still tested but not used by `main.py`. The graph imports its shared helpers: `create_groq_model` (temperature 0) and `create_readonly_database`, a `SQLDatabase` subclass that sends `run()` through `execute_readonly_sql` and is limited to the six ERP tables in `ERP_TABLES`.
 
@@ -50,6 +51,14 @@ Adding a new business action means updating all of: an `*Input` model and functi
 **Config:** the LLM is Groq via `langchain-groq` (`GROQ_MODEL`, default `openai/gpt-oss-120b`). LangSmith tracing is optional and controlled by env vars. `config` must be imported before LangChain/LangGraph so `.env` is loaded before tracers initialize. `agent.py` and `graph.py` both do this deliberately.
 
 <!-- skrrt:ship -->
+## Architecture decisions
+
+`docs/decisions.md` is the ADR log. When a change makes a significant architectural or technical decision (new
+boundaries, providers, data flows, security controls, or anything costly to reverse), add an ADR or amend the existing
+one in the same change. Supersede rather than delete, and never renumber. Base every reason on the user's words, the
+code, or the project history; if no reason is recorded, leave it out and ask. Routine changes and implementation
+details get no ADR.
+
 ## Git workflow
 
 Use the Skrrt ship skills for git work: `commit` for commits, `pr` for pull and merge requests,

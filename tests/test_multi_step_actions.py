@@ -20,7 +20,10 @@ from graph import (
     run_erp_graph,
 )
 from models import Invoice, Product, PurchaseOrder
+from seed import create_admin_engine
 from tools.sql_tools import execute_readonly_sql, validate_readonly_sql
+
+admin_engine = create_admin_engine()
 
 
 class QueryThenActionNodes:
@@ -84,7 +87,7 @@ def test_restock_matching_products_after_batch_approval() -> None:
         }
 
     try:
-        with Session(engine) as session, session.begin():
+        with Session(admin_engine) as session, session.begin():
             first = session.get(Product, product_ids[0])
             second = session.get(Product, product_ids[1])
             assert first is not None and second is not None
@@ -147,13 +150,13 @@ def test_restock_matching_products_after_batch_approval() -> None:
                 ]
             assert "2 actions approved and executed" in completed["answer"]
         finally:
-            with Session(engine) as session, session.begin():
+            with Session(admin_engine) as session, session.begin():
                 for purchase_order in session.scalars(
                     select(PurchaseOrder).where(PurchaseOrder.id.in_(created_ids))
                 ):
                     session.delete(purchase_order)
     finally:
-        with Session(engine) as session, session.begin():
+        with Session(admin_engine) as session, session.begin():
             for product_id, values in original_inventory.items():
                 product = session.get(Product, product_id)
                 assert product is not None
@@ -176,7 +179,7 @@ def test_send_reminders_for_matching_overdue_invoices_after_approval() -> None:
         }
 
     try:
-        with Session(engine) as session, session.begin():
+        with Session(admin_engine) as session, session.begin():
             first = session.get(Invoice, invoice_ids[0])
             second = session.get(Invoice, invoice_ids[1])
             assert first is not None and second is not None
@@ -226,7 +229,7 @@ def test_send_reminders_for_matching_overdue_invoices_after_approval() -> None:
         assert len(completed["action_results"]) == 2
         assert "2 actions approved and executed" in completed["answer"]
     finally:
-        with Session(engine) as session, session.begin():
+        with Session(admin_engine) as session, session.begin():
             for invoice_id, values in original_values.items():
                 invoice = session.get(Invoice, invoice_id)
                 assert invoice is not None
@@ -282,7 +285,7 @@ def test_overdue_reminder_rejection_leaves_invoice_unchanged() -> None:
         )
 
     try:
-        with Session(engine) as session, session.begin():
+        with Session(admin_engine) as session, session.begin():
             invoice = session.get(Invoice, invoice_id)
             assert invoice is not None
             invoice.amount = Decimal("9000.00")
@@ -314,7 +317,7 @@ def test_overdue_reminder_rejection_leaves_invoice_unchanged() -> None:
         assert completed["action_results"] == []
         assert completed["approval_status"] == "rejected"
     finally:
-        with Session(engine) as session, session.begin():
+        with Session(admin_engine) as session, session.begin():
             invoice = session.get(Invoice, invoice_id)
             assert invoice is not None
             (
