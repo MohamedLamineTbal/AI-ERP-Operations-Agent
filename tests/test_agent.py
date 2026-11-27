@@ -16,7 +16,7 @@ from agent import (
     create_readonly_database,
 )
 from database import engine
-from models import PurchaseOrder
+from models import Customer, PurchaseOrder
 from tools.proposal_tools import PendingAction
 
 
@@ -180,3 +180,14 @@ def test_action_request_returns_structured_proposal_without_execution() -> None:
     with Session(engine) as session:
         after_count = session.scalar(select(func.count(PurchaseOrder.id)))
     assert after_count == before_count
+
+
+def test_schema_sent_to_the_model_contains_no_customer_data() -> None:
+    with Session(engine) as session:
+        customer = session.scalar(select(Customer).order_by(Customer.id))
+    assert customer is not None
+
+    schema = create_readonly_database().get_table_info()
+
+    assert customer.email not in schema
+    assert customer.name not in schema
