@@ -531,11 +531,20 @@ These requests were prevented from performing unauthorized database mutations.
 
 ## Testing
 
+The tests run against a separate database, never the one in `DATABASE_URL`. Add its URL to `.env` (the suite creates
+it if it doesn't exist):
+
+```env
+TEST_DATABASE_URL=postgresql+psycopg://USERNAME:PASSWORD@localhost:5432/erp_ai_test
+```
+
 Run the automated test suite with:
 
 ```bash
 pytest
 ```
+
+Each run rebuilds the test database from the seed data, and any test that writes is followed by a fresh seed.
 
 The system has also been manually tested end-to-end against PostgreSQL.
 
