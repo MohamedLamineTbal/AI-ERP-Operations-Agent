@@ -21,6 +21,25 @@ from models import Invoice, Order, Product, PurchaseOrder
 
 OrderStatus = Literal["pending", "processing", "shipped", "completed", "cancelled"]
 
+# Fulfilment only moves forward. Reaching "cancelled" goes through cancel_order,
+# which records a reason.
+ORDER_TRANSITIONS: dict[str, tuple[OrderStatus, ...]] = {
+    "pending": ("processing", "cancelled"),
+    "processing": ("shipped", "cancelled"),
+    "shipped": ("completed",),
+    "completed": (),
+    "cancelled": (),
+}
+
+
+def can_cancel(status: str) -> bool:
+    return "cancelled" in ORDER_TRANSITIONS[status]
+
+
+def next_order_statuses(status: str) -> list[OrderStatus]:
+    """The statuses update_order_status accepts from *status*."""
+    return [s for s in ORDER_TRANSITIONS[status] if s != "cancelled"]
+
 
 class BusinessActionError(ValueError):
     """Raised when an action violates an ERP business rule."""
@@ -132,7 +151,7 @@ def _cancel_order(session: Session, action: CancelOrderInput) -> dict[str, Any]:
         raise BusinessActionError(f"Order {action.order_id} does not exist.")
     if order.status == "cancelled":
         raise BusinessActionError(f"Order {action.order_id} is already cancelled.")
-    if order.status in {"shipped", "completed"}:
+    if not can_cancel(order.status):
         raise BusinessActionError(
             f"Order {action.order_id} is {order.status} and cannot be cancelled."
         )
@@ -179,6 +198,17 @@ def _update_order_status(
     if order.status == "cancelled":
         raise BusinessActionError(
             f"Cancelled order {action.order_id} cannot change status."
+        )
+    if action.new_status == order.status:
+        raise BusinessActionError(
+            f"Order {action.order_id} is already {order.status}."
+        )
+    allowed = next_order_statuses(order.status)
+    if action.new_status not in allowed:
+        only = f" It can only move to {' or '.join(allowed)}." if allowed else ""
+        raise BusinessActionError(
+            f"Order {action.order_id} is {order.status} and can't move to "
+            f"{action.new_status}.{only}"
         )
 
     order.status = action.new_status

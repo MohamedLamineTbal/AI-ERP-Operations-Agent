@@ -1,6 +1,8 @@
 """Integration tests for explicit ERP business actions."""
 
 from datetime import datetime
+from itertools import product as pairs
+from typing import get_args
 
 import pytest
 from pydantic import ValidationError
@@ -11,7 +13,9 @@ from database import engine
 from models import Invoice, Order, Product, PurchaseOrder
 from seed import create_admin_engine
 from tools.action_tools import (
+    ORDER_TRANSITIONS,
     BusinessActionError,
+    OrderStatus,
     cancel_order,
     create_purchase_order,
     mark_invoice_reminder_sent,
@@ -176,3 +180,41 @@ def test_mark_invoice_reminder_sent() -> None:
 def test_mark_invoice_reminder_requires_existing_invoice() -> None:
     with pytest.raises(BusinessActionError, match="does not exist"):
         mark_invoice_reminder_sent(MISSING_ID)
+
+
+FULFILMENT_STEPS = {
+    ("pending", "processing"),
+    ("processing", "shipped"),
+    ("shipped", "completed"),
+}
+
+
+@pytest.mark.parametrize(
+    "current, new",
+    [p for p in pairs(get_args(OrderStatus), repeat=2) if p[1] != "cancelled"],
+)
+def test_order_status_only_moves_forward_one_step(current: str, new: str) -> None:
+    with Session(engine) as session, session.begin():
+        order = session.scalar(select(Order).order_by(Order.id))
+        assert order is not None
+        order.status = current
+        session.flush()
+        try:
+            if (current, new) in FULFILMENT_STEPS:
+                assert update_order_status(order.id, new, _session=session)["status"] == new
+            else:
+                with pytest.raises(BusinessActionError):
+                    update_order_status(order.id, new, _session=session)
+        finally:
+            session.rollback()
+
+
+def test_shipped_and_completed_orders_can_never_return_to_pending_or_processing() -> None:
+    reachable = {"shipped", "completed"}
+    frontier = list(reachable)
+    while frontier:
+        for status in ORDER_TRANSITIONS[frontier.pop()]:
+            if status not in reachable:
+                reachable.add(status)
+                frontier.append(status)
+    assert reachable.isdisjoint({"pending", "processing"})
