@@ -17,9 +17,9 @@ pytest tests/test_graph.py::test_name  # single test
 There is no lint/format configuration in the repo.
 
 Testing notes:
-- `config.py` raises at import time if `DATABASE_URL` or `READONLY_DATABASE_URL` is unset, so almost every module (and test) needs a `.env`. Tests also need `DATABASE_ADMIN_URL`.
-- The app login can't delete rows or update most columns, so tests arrange and clean up data through `admin_engine` (`seed.create_admin_engine()`), and run the code under test on the app's own engines.
-- `test_database.py`, `test_action_tools.py`, `test_agent.py`, `test_graph_approval.py`, and `test_multi_step_actions.py` hit a real, seeded PostgreSQL database. Action tests write rows and clean up in `finally` blocks, as the admin login.
+- `config.py` raises at import time if `DATABASE_URL` or `READONLY_DATABASE_URL` is unset, so almost every module (and test) needs a `.env`.
+- Tests never touch the development database. `tests/conftest.py` repoints the URLs before anything imports `config`: `TEST_DATABASE_URL` (a login that can create tables and roles) becomes `DATABASE_ADMIN_URL`, and `DATABASE_URL` and `READONLY_DATABASE_URL` keep their logins but use the test database. It refuses to run if that is the development database, rebuilds it from the seed at the start of each run, and reseeds after any test that committed a write. So database tests can rely on fresh seed data, and don't need cleanup to protect real data. Any module that loads `config` at import time must keep working under that override.
+- The app login can't delete rows or update most columns, so tests arrange data through `admin_engine` (`seed.create_admin_engine()`), and run the code under test on the app's own engines.
 - Graph tests avoid Groq by injecting fake node classes into `build_erp_graph(nodes=...)` or fake LLMs into `ERPGraphNodes(llm=...)`. Follow that pattern rather than calling the real model.
 - `test_tracing_config.py` asserts exact values in `.env.example` and `requirements.txt` (LangSmith tracing off by default, `langsmith>=0.4,<1.0`). Update it if you change either file.
 
@@ -51,6 +51,14 @@ Adding a new business action means updating all of: an `*Input` model and functi
 **Config:** the LLM is Groq via `langchain-groq` (`GROQ_MODEL`, default `openai/gpt-oss-120b`). LangSmith tracing is optional and controlled by env vars. `config` must be imported before LangChain/LangGraph so `.env` is loaded before tracers initialize. `agent.py` and `graph.py` both do this deliberately.
 
 <!-- skrrt:ship -->
+## Architecture decisions
+
+`docs/decisions.md` is the ADR log. When a change makes a significant architectural or technical decision (new
+boundaries, providers, data flows, security controls, or anything costly to reverse), add an ADR or amend the existing
+one in the same change. Supersede rather than delete, and never renumber. Base every reason on the user's words, the
+code, or the project history; if no reason is recorded, leave it out and ask. Routine changes and implementation
+details get no ADR.
+
 ## Git workflow
 
 Use the Skrrt ship skills for git work: `commit` for commits, `pr` for pull and merge requests,
